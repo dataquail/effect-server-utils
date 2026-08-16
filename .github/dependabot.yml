@@ -30,6 +30,15 @@ updates:
       types:
         patterns:
           - "@types/*"
+      # Grouped so they can never bump apart. Starlight pins an exact Astro peer
+      # range, and a lone Starlight minor (0.37 -> 0.41) silently demanded Astro 7
+      # and broke the docs build. Grouped, such a PR carries the Astro major too,
+      # which auto-merge declines — putting a human in the loop exactly when one
+      # is needed.
+      astro:
+        patterns:
+          - "astro"
+          - "@astrojs/*"
     ignore:
       # Pinned to the exact beta the packages declare as a peer dependency; a
       # bump is a coordinated release, not a dependency update.
