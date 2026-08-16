@@ -1,0 +1,101 @@
+---
+title: AuthZ Overview
+description: The shape of @effect-server-utils/authz — one call at the boundary, over registries a host fills in.
+---
+
+`@effect-server-utils/authz` is declarative per-route authorization for Effect. An inbound adapter makes
+one call:
+
+```ts
+const updateTodo = Effect.gen(function* () {
+  yield* hasPermissions("todo", "update", todoId);
+  // ...
+});
+```
+
+Everything else is registration.
+
+## The mechanism, not the taxonomy
+
+Authorization libraries tend to ship a model — RBAC, ABAC, a fixed CRUD vocabulary — and then a real
+application spends its life bending to it. This one ships the machinery and takes the model from you.
+
+Four types the library is written against but does not own arrive through
+[a single declaration-merged config seam](/effect-server-utils/authz/configuration/):
+
+| Slot              | What it is                                       |
+| ----------------- | ------------------------------------------------ |
+| `caller`          | the identity a check interrogates                |
+| `checkFailure`    | what a check or resolver may fail with           |
+| `resourceMissing` | how a resolver reports absence                   |
+| `action`          | the closed set of verbs a policy may be keyed on |
+
+Whether authorization is modelled as CRUD or as domain verbs like `publish` and `archive` is a modelling
+decision. A library that shipped one would be imposing an authorization taxonomy rather than providing a
+mechanism.
+
+## The four pieces
+
+**[Checks](/effect-server-utils/authz/checks/)** are boolean predicates over `(caller, resource)`,
+expressed as Effects so they can reach a repository. `Check.any` and `Check.all` compose them _before_
+the single lift to a denial at the boundary — which is why they return `boolean` rather than
+`void | denial`.
+
+**[The policy registry](/effect-server-utils/authz/policies/)** says which checks answer for which
+`(resource, action)` pair. Each module registers the pairs it owns; the composition root folds the
+contributions into one lookup.
+
+**[The resource resolver registry](/effect-server-utils/authz/resources/)** says how a scoped resource is
+loaded before its checks run. Registration here is also the switch that decides whether a resource takes
+an id at all.
+
+**[The adapter](/effect-server-utils/authz/adapter/)** pins the two things the DSL cannot supply for
+itself: the identity Tag to read the caller from, and the error a denial becomes. That is what keeps the
+library from ever naming an HTTP status or a session type.
+
+## Scoped and unscoped resources
+
+The single most useful thing to understand about the API is that **scopedness is a property of the
+resource, not of the action** — and it is decided by whether the resource appears in
+`ResourceResolverMap`.
+
+```ts
+const calls = Effect.gen(function* () {
+  // `todo` IS in ResourceResolverMap — scoped
+  yield* hasPermissions("todo", "update", todoId);
+  //                                      ^ required, on every action
+
+  // `platform` is NOT — unscoped
+  yield* hasPermissions("platform", "administer");
+  //                                ^ an id here does not compile
+});
+```
+
+For a scoped resource the framework loads the resource via its registered resolver and hands it to the
+check, so a check can never receive `undefined`. For an unscoped one no resolver runs, and
+`ResourceMissing` is **absent from the error channel** — so an unscoped call site has no unreachable
+branch to defend against.
+
+## What a call gives you
+
+```ts
+hasPermissions("todo", "update", todoId);
+// Effect<void, Denied | CheckFailure | NotFound, CurrentUser | PolicyRegistry | ResourceResolverRegistry>
+```
+
+- Succeeds with `void` when the policy returns `true`.
+- Fails with your denial error when it returns `false`.
+- Fails with `NotFound` (or whatever you configured) when the resource does not resolve — for scoped
+  resources only.
+- Fails with your `CheckFailure` when the store is momentarily unavailable, in the resolver or in the
+  check. Authorization reads the store twice and the same transient outage can strike either, so one
+  type covers both.
+- Opens an `authz.hasPermissions.<resource>.<action>` span.
+
+Two conditions are **defects** rather than failures, because both are wiring bugs no call site can act
+on: no policy registered for the pair, and no resolver registered for a scoped resource.
+
+## Next
+
+Start with [Configuration](/effect-server-utils/authz/configuration/) — nothing else type-checks until
+the seam is filled in.

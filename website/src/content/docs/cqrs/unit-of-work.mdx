@@ -1,0 +1,133 @@
+---
+title: Unit of work
+description: The atomicity boundary a write-side use case declares once — built over a transaction primitive you supply.
+---
+
+`withUnitOfWork` is the combinator a write-side use case applies at the end of its pipe:
+
+```ts
+import { withUnitOfWork } from "@effect-server-utils/cqrs";
+
+export const placeOrder = (input: PlaceOrderInput) =>
+  Effect.gen(function* () {
+    const order = yield* orders.create(input);
+    yield* inventory.reserve(order);
+    yield* eventBus.dispatch([OrderPlaced.make({ orderId: order.id })]);
+    return order.id;
+  }).pipe(withUnitOfWork);
+```
+
+Every repository write inside commits together or is discarded together, and every immediate event
+subscriber inherits that same boundary.
+
+It goes at the **end of the pipe**, visibly, rather than in an inner block — an inner boundary is one
+that dispatched event handlers would silently join without the use case saying so.
+
+The name is deliberate. `transactional` would leak the SQL implementation the abstraction exists to
+hide, and the port is what lets a use case be unit-tested against a pass-through implementation with no
+database in sight.
+
+## What you supply: `TransactionDriver`
+
+This is the whole of what the unit of work needs from a datastore. Everything else — nesting,
+post-commit buffering, flush ordering, failure isolation — lives in this package.
+
+```ts
+interface TransactionDriverShape {
+  /** Opens a top-level scope. Commits on success, discards on failure. */
+  readonly withTransaction: <A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E | TransactionFailed | PersistenceUnavailable, R>;
+
+  /** Opens a nested scope on the ambient one — a savepoint. */
+  readonly withSavepoint: <A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E | TransactionFailed | PersistenceUnavailable, R>;
+
+  /** Whether a scope is already open — what makes `run` re-entrant. */
+  readonly isActive: Effect.Effect<boolean>;
+}
+```
+
+Your adapter is responsible for making its own connection handle **ambient** to the effect it wraps, so
+a repository inside picks it up. Nothing about that handle appears in this interface; if it did, every
+consumer's read path would have to name it.
+
+```ts
+const UnitOfWorkLive = makeUnitOfWork().pipe(Layer.provide(PostgresTransactionDriver));
+```
+
+## Re-entrancy
+
+`run` is re-entrant. A bare call opens a scope; a call already inside one **nests** rather than reaching
+for a second connection.
+
+Whether a nested failure is fatal to the whole operation is then the caller's choice:
+
+- **catching it** discards only the nested scope, leaving the enclosing one free to commit;
+- **letting it propagate** discards everything.
+
+A rolled-back nested scope also truncates the after-commit event buffer back to its length on entry, so
+events from work that was undone never fire.
+
+## The commit sequence
+
+1. The effect runs inside the driver's scope. Immediate event subscribers run here, in the publisher's
+   fiber.
+2. Buffered after-commit events accumulate on the `UnitOfWorkScope` as they are dispatched.
+3. The scope commits. **A failed scope never reaches step 4** — that sequencing is the whole commit
+   guarantee.
+4. The buffer is drained: stream consumers are broadcast to first and not awaited, then each
+   after-commit handler runs in its own unit of work, its failure caught and reported to
+   [`UnhandledFailures`](/effect-server-utils/cqrs/unhandled-failures/).
+
+Step 4 is **uninterruptible**. The transaction has committed, so an interrupt arriving then — a caller
+hanging up, a shutdown — would otherwise discard every reaction to work that is already durable. The
+caller was already waiting for the flush, so the only thing given up is the ability to cancel reactions
+that must happen anyway.
+
+Stream consumers go first, and unawaited, because a process manager may run for days; holding the flush
+for one would stall every later reaction.
+
+## Error channels
+
+```ts
+class TransactionFailed {
+  readonly message: string;
+}
+class PersistenceUnavailable {
+  readonly message: string;
+}
+```
+
+**`TransactionFailed`** is the atomicity machinery itself failing — a rejected commit, a savepoint that
+would not release. By the time an effect reaches the unit of work, a repository has already translated
+its own constraint violations into domain errors, so what is left is something no use case can act on.
+`withUnitOfWork` demotes it to a defect in this one place, which is what keeps a use case's error
+channel as clean as its name.
+
+**`PersistenceUnavailable`** is the transient case: the store backing a repository is momentarily unable
+to service the request. It propagates as a failure, because retrying is a real option and a transport
+boundary can turn it into a 503. It lives in this package rather than in a database package so a
+module's `domain/` can name it in a repository port without importing infrastructure.
+
+## `UnitOfWorkScope`
+
+Present exactly while a unit of work is open, and the carrier for the after-commit buffer. Its presence
+is the answer to "am I inside a unit of work?" — which is what the event bus fails fast on.
+
+You rarely name it directly. It is a separate module from the unit of work because the unit of work
+reads the event bus to flush it and that bus reads this scope; routing both through a carrier is what
+keeps the dependency acyclic.
+
+## Type reference
+
+| Export                                         | What it is                                       |
+| ---------------------------------------------- | ------------------------------------------------ |
+| `withUnitOfWork(effect)`                       | the boundary combinator a use case applies       |
+| `UnitOfWork` / `UnitOfWorkShape`               | the port, `{ run }`                              |
+| `makeUnitOfWork()`                             | `Layer<UnitOfWork, never, TransactionDriver>`    |
+| `TransactionDriver` / `TransactionDriverShape` | what you supply                                  |
+| `TransactionFailed`                            | the boundary itself failed — demoted to a defect |
+| `PersistenceUnavailable`                       | transient store outage — propagates              |
+| `UnitOfWorkScope`                              | present while a unit of work is open             |

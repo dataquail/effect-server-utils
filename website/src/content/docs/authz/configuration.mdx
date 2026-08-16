@@ -1,0 +1,111 @@
+---
+title: Configuration
+description: The declaration-merged seam where a host says who the caller is, what may fail, and which verbs exist.
+---
+
+`AuthzConfig` is the type-level seam. A host augments it **once**, and the whole package is written
+against the four aliases derived from it.
+
+```ts
+import { type Action as AppAction } from "./actions.js";
+
+declare module "@effect-server-utils/authz/config" {
+  interface AuthzConfig {
+    caller: CurrentUser["Service"];
+    checkFailure: PersistenceUnavailable;
+    resourceMissing: NotFound;
+    action: AppAction;
+  }
+}
+```
+
+:::caution[Alias a host type whose name collides]
+An augmentation body resolves unqualified names in the _config module's_ scope, so a host type called
+`Action` would bind to the alias declared there and self-reference (`TS2502`). Import it under a
+different name, as `AppAction` above.
+:::
+
+## The four slots
+
+### `caller`
+
+The identity a check interrogates.
+
+Unconfigured it is `never`, deliberately — a check body reaching for a field then fails at the host's
+very first check, rather than silently typing everything `unknown` and failing somewhere far away.
+
+### `checkFailure`
+
+What a check or a resolver is allowed to fail with.
+
+One type covers both because authorization reads the store twice — once to resolve the resource, once
+inside the check — and the same transient outage can strike either.
+
+### `resourceMissing`
+
+How a resolver reports "no such resource". This is the default for any resource that does not opt out
+with `notFound: never`; see [Resource resolvers](/effect-server-utils/authz/resources/).
+
+### `action`
+
+The closed set of verbs a policy may be keyed on, intersected with each resource's registered actions.
+
+Unconfigured it is `string`, which imposes nothing: every action a resource registers stands on its own.
+Declaring the slot is what turns a shared vocabulary into something the compiler holds every resource
+to.
+
+```ts
+const Actions = {
+  View: "view",
+  Publish: "publish",
+  Archive: "archive",
+} as const;
+
+export type AppAction = (typeof Actions)[keyof typeof Actions];
+```
+
+Nothing about the package prefers CRUD. The vocabulary is yours.
+
+## Why an augmented interface, not generic parameters
+
+The registries are themselves declaration-merged: a module writes `CheckFor<'todo'>` at the **type
+level**, with no value for TypeScript to infer from. Threading four type parameters through `PolicyMap`,
+`PolicyContribution`, and `Resolver` would put them at every registration site rather than at the one
+place the host actually decides them.
+
+The cost is that only **one host can be configured per TypeScript program**. In practice that is what an
+application is; it does mean a library that wants its own policy vocabulary cannot be configured
+independently of its consumer.
+
+## One program, one configuration
+
+Because `AuthzConfig` is a module augmentation, it must be declared somewhere the whole program sees —
+your composition root, or a dedicated `authz-config.ts` that everything else imports transitively. The
+same is true of the two registry maps:
+
+```ts
+declare module "@effect-server-utils/authz/resource-resolver-registry" {
+  interface ResourceResolverMap {
+    todo: { resourceType: Todo; idType: TodoId };
+  }
+}
+
+declare module "@effect-server-utils/authz/policy-registry" {
+  interface PolicyMap {
+    todo: { view: CheckFor<"todo">; update: CheckFor<"todo"> };
+  }
+}
+```
+
+Each module can contribute its own augmentation for the resources it owns — that is the point of
+declaration merging — as long as those files end up in the program.
+
+## Type reference
+
+| Export            | What it is                                   |
+| ----------------- | -------------------------------------------- |
+| `AuthzConfig`     | the interface a host augments                |
+| `Caller`          | `AuthzConfig['caller']`, or `never`          |
+| `CheckFailure`    | `AuthzConfig['checkFailure']`, or `never`    |
+| `ResourceMissing` | `AuthzConfig['resourceMissing']`, or `never` |
+| `Action`          | `AuthzConfig['action']`, or `string`         |

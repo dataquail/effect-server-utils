@@ -1,0 +1,107 @@
+---
+title: Resource resolvers
+description: How a scoped resource is loaded before its checks run — and how that registration decides whether a resource takes an id at all.
+---
+
+`ResourceResolverMap` maps a resource name to the shape of the thing it loads and the id that loads it.
+
+```ts
+declare module "@effect-server-utils/authz/resource-resolver-registry" {
+  interface ResourceResolverMap {
+    todo: { resourceType: Todo; idType: TodoId };
+    organization: { resourceType: Organization; idType: OrganizationId };
+  }
+}
+```
+
+## Registration is the scopedness switch
+
+A resource that appears here is **scoped**: every action on it requires an id, the framework loads the
+resource through the registered resolver, and the loaded value is handed to the check.
+
+A resource absent from this map is **unscoped**: no action on it takes an id, no resolver runs, and
+`ResourceMissing` never enters a call site's error channel.
+
+```ts
+const calls = Effect.gen(function* () {
+  yield* hasPermissions("todo", "update", todoId); // scoped — id required
+  yield* hasPermissions("platform", "administer"); // unscoped — id forbidden
+});
+```
+
+Both mistakes are compile errors. The API uses a variadic-tuple third argument rather than overloads
+specifically because the errors read better that way: a missing id is _"Expected 3 arguments, but got
+2"_, not _"not assignable to type 'never'"_.
+
+Scopedness being a property of the **resource** rather than of the action is the modelling decision
+worth internalising. `todo.list` does not become unscoped just because listing has no single subject —
+if `todo` is scoped, model the listing as a different resource.
+
+## Writing a resolver
+
+```ts
+type Resolver<R> = (
+  id: IdFor<R>,
+) => Effect.Effect<ResourceTypeFor<R>, NotFoundFor<R> | CheckFailure, never>;
+```
+
+```ts
+import { makeResourceResolverRegistry } from "@effect-server-utils/authz";
+
+const ResourceResolversLive = makeResourceResolverRegistry({
+  todo: (id) => todoRepository.byId(id),
+  organization: (id) => organizationRepository.byId(id),
+});
+```
+
+The composition root calls this with the union of every module's contributions; a test calls it with a
+synthetic map.
+
+The configured `CheckFailure` is in the channel regardless — resolving a resource reads the store, and a
+transient outage there is the caller's problem to retry. A resolver that died on it instead would report
+a retryable outage as an internal error, while the identical outage one step later, inside the check or
+the use case, propagated as a failure.
+
+## Resources that cannot be missing
+
+Most resources load a row and can therefore report absence, so `NotFoundFor<R>` defaults to your
+configured `resourceMissing`. A resource whose identity **is** its id — an "echo" resolver with nothing
+to load — opts out:
+
+```ts
+declare module "@effect-server-utils/authz/resource-resolver-registry" {
+  interface ResourceResolverMap {
+    tenant: { resourceType: TenantId; idType: TenantId; notFound: never };
+  }
+}
+
+const ResourceResolversLive = makeResourceResolverRegistry({
+  tenant: (id) => Effect.succeed(id),
+});
+```
+
+`notFound: never` removes `NotFound` from every call site's error channel for that resource, so there is
+no unreachable branch to defend against.
+
+## A missing resolver is a defect
+
+Calling `hasPermissions` for a scoped resource with no registered resolver **dies**:
+
+```
+ResourceResolverRegistry: no resolver registered for resource "todo"
+```
+
+Like a missing policy, this is a wiring bug rather than an authorization outcome.
+
+## Type reference
+
+| Export                                    | What it is                                              |
+| ----------------------------------------- | ------------------------------------------------------- |
+| `ResourceResolverMap`                     | the interface a host augments                           |
+| `ResourceName`                            | `keyof ResourceResolverMap` — i.e. the scoped resources |
+| `IdFor<R>`                                | the id type a resource is loaded by                     |
+| `ResourceTypeFor<R>`                      | what a resolver returns and a check receives            |
+| `NotFoundFor<R>`                          | the absence signal, or `never` if opted out             |
+| `Resolver<R>`                             | the resolver signature                                  |
+| `makeResourceResolverRegistry(resolvers)` | `Layer<ResourceResolverRegistry>`                       |
+| `ResourceResolverRegistry`                | the service `hasPermissions` reads                      |

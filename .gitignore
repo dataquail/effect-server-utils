@@ -1,0 +1,73 @@
+# See https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files for more about ignoring files.
+
+# compiled output
+build
+dist
+tmp
+out-tsc
+*.tsbuildinfo
+.tsbuildinfo/
+
+# dependencies
+node_modules
+
+# IDEs and editors
+/.idea
+.project
+.classpath
+.c9/
+*.launch
+.settings/
+*.sublime-workspace
+
+# IDE - VSCode
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# misc
+/.sass-cache
+/connect.lock
+/coverage
+npm-debug.log
+yarn-error.log
+
+# System Files
+.DS_Store
+Thumbs.db
+
+.nx/cache
+.nx/workspace-data
+
+# Nx graph output
+output.html
+output.json
+
+vitest.config.*.timestamp*
+
+.secrets
+.cursor/rules/nx-rules.mdc
+.github/instructions/nx.instructions.md
+
+# Astro
+.astro
+website/dist
+
+# Notes
+/docs/scratch
+.claude/worktrees
+.claude/settings.local.json
+
+# DevPod
+.devcontainer/.env
+
+# Compiled output emitted beside its own source. A build misconfigured to write into
+# `src/` shadows the `.ts` it came from: TypeScript resolves the stale `.js` first and
+# every type from that module silently degrades to `any`. Ignoring keeps the artifacts
+# out of a commit — it does not stop the shadowing, so delete them if a build starts
+# resolving a workspace package as `any`.
+packages/*/src/**/*.js
+packages/*/src/**/*.mjs
+packages/*/src/**/*.cjs
+packages/*/src/**/*.d.ts
+packages/*/src/**/*.map

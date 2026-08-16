@@ -1,0 +1,117 @@
+---
+title: Policy registry
+description: Which checks answer for which (resource, action) pair.
+---
+
+`PolicyMap` is the declaration-merged seam that says which `(resource, action)` pairs exist and what
+type of check each takes.
+
+```ts
+import { type CheckFor } from "@effect-server-utils/authz";
+
+declare module "@effect-server-utils/authz/policy-registry" {
+  interface PolicyMap {
+    todo: {
+      view: CheckFor<"todo">;
+      update: CheckFor<"todo">;
+      archive: CheckFor<"todo">;
+    };
+    platform: {
+      administer: CheckFor<"platform">;
+    };
+  }
+}
+```
+
+`CheckFor<R>` resolves to the right shape automatically:
+
+```ts
+type CheckFor<R> = R extends ResourceName ? ResourceCheck<ResourceTypeFor<R>> : UnscopedCheck;
+```
+
+Registration in `ResourceResolverMap` is the switch — a resource with a resolver always hands its
+resolved value to the check, one without never does. **The action does not enter into it.**
+
+The action keys are additionally intersected with your configured `Action` vocabulary, so a typo, or a
+verb that is not in the vocabulary, does not compile.
+
+## Contributing policies
+
+A module fills in only the entries it owns. `PolicyContribution` is a partial nested object, so nothing
+forces one module to know about another's resources:
+
+```ts
+import * as Effect from "effect/Effect";
+import { Check } from "@effect-server-utils/authz";
+
+export const TodoPolicies = {
+  todo: {
+    view: Check.any(isOwner, isAdmin),
+    update: [isOwner, notArchived],
+    archive: isAdmin,
+  },
+} satisfies PolicyContribution;
+```
+
+An entry may be a **single check or an array**. Arrays are AND-composed — every check must return `true`
+for the action to be allowed, short-circuiting on the first `false`. For OR-composition, wrap with
+`Check.any`.
+
+Stacking checks in an array keeps the call site readable as policies grow:
+
+```ts
+update: [SuperAdminOnly, NotRecentlyPromoted, WithinRetentionWindow];
+```
+
+## Folding at the composition root
+
+```ts
+import { makePolicyRegistry } from "@effect-server-utils/authz";
+
+const PolicyRegistryLive = makePolicyRegistry([TodoPolicies, BillingPolicies, PlatformPolicies]);
+```
+
+The contributions are flattened into a single two-level map for O(1) lookup at dispatch.
+
+**Two contributions claiming the same `(resource, action)` throws.** Modules should not overlap, and the
+merge collapsing silently would otherwise drop a policy — the one failure mode where the result is
+"everything still works, but the wrong rule applies".
+
+## A missing policy is a defect
+
+If `hasPermissions` is called for a pair nothing registered, the effect **dies**:
+
+```
+PolicyRegistry: no policy registered for "todo.publish"
+```
+
+That is a wiring bug rather than an authorization outcome, so it is a defect rather than a denial. It is
+also why declaring the pairs in `PolicyMap` matters: the type level is what keeps the runtime lookup from
+being the first place you find out.
+
+## Testing a policy
+
+Registered checks close over their own dependencies and carry `R = never`, so a policy test provides
+nothing:
+
+```ts
+it.effect("an owner may update their own todo", () =>
+  Effect.gen(function* () {
+    const allowed = yield* TodoPolicies.todo.update(caller, ownedTodo);
+    deepStrictEqual(allowed, true);
+  }),
+);
+```
+
+## Type reference
+
+| Export                              | What it is                                        |
+| ----------------------------------- | ------------------------------------------------- |
+| `PolicyMap`                         | the interface a host augments                     |
+| `PolicyResource`                    | `keyof PolicyMap`                                 |
+| `ActionFor<R>`                      | the actions registered for a resource, ∩ `Action` |
+| `CheckFor<R>`                       | the check shape a resource's entries must have    |
+| `CheckOrArray<R>`                   | a single check, or an AND-composed array          |
+| `PolicyContribution`                | a module's partial contribution                   |
+| `makePolicyRegistry(contributions)` | `Layer<PolicyRegistry>`                           |
+| `PolicyRegistry`                    | the service `hasPermissions` reads                |

@@ -1,0 +1,149 @@
+---
+title: Commands
+description: Declaring write-side messages, implementing their handlers, and dispatching them.
+---
+
+A command is a write-side message: a tag, the payload that names it, and the success and failure it
+declares. Defining one is the only thing a feature module has to do to make it dispatchable.
+
+## Declaring
+
+```ts
+import * as Schema from "effect/Schema";
+import { Command } from "@effect-server-utils/cqrs";
+
+class OrderNotFound extends Schema.TaggedErrorClass<OrderNotFound>()("OrderNotFound", {
+  orderId: Schema.String,
+}) {}
+
+const PlaceOrder = Command.make("PlaceOrder", {
+  payload: { orderId: Schema.String, quantity: Schema.Number },
+  success: Schema.String,
+  failure: OrderNotFound,
+});
+```
+
+`payload` accepts either a field record (normalised to `Schema.Struct` for you) or a schema. All three
+options default to what a command that reports nothing and cannot fail declares:
+
+| Option    | Default        | Meaning                                 |
+| --------- | -------------- | --------------------------------------- |
+| `payload` | `Schema.Void`  | takes nothing                           |
+| `success` | `Schema.Void`  | reports nothing                         |
+| `failure` | `Schema.Never` | cannot fail in a way the caller handles |
+
+Declaring the channels as **schemas** rather than bare types is what keeps a command portable: the
+same definition describes an in-process dispatch today and a serialized one if the module is ever
+extracted. Nothing about the transport that carries a command appears in its type, and no consumer
+imports one.
+
+## Grouping and implementing
+
+A module groups the tags it owns so it can hand the composition root a single value:
+
+```ts
+const OrderCommands = Command.group(PlaceOrder, CancelOrder);
+
+export const OrderHandlers = Command.handlersOf(OrderCommands, {
+  PlaceOrder: (payload) =>
+    Effect.gen(function* () {
+      const repo = yield* OrderRepository;
+      const order = yield* repo.byId(payload.orderId);
+      // ...
+      return receiptFor(order);
+    }),
+  CancelOrder: (payload) => new OrderNotFound({ orderId: payload.orderId }),
+});
+```
+
+The handler map is checked against the group: a missing tag, an extra tag, a wrong payload type, or a
+success value the definition did not declare all fail to compile.
+
+`handlersOf` returns a `Layer` whose **requirements are the union of everything the handlers reached
+for** — `OrderRepository` above. That is the load-bearing part: satisfying those services moves from
+every dispatch site to the one place that composes the application.
+
+```ts
+Command.handlersOf(group, handlers): Layer<Registered<G>, never, HandlerServices<G, H>>
+```
+
+## Dispatching within a module
+
+`Command.dispatcher` builds the group's dispatch surface — one method per tag:
+
+```ts
+const placeOrder = Effect.gen(function* () {
+  const orders = yield* Command.dispatcher(OrderCommands);
+  return yield* orders.PlaceOrder({ orderId: "ord_1", quantity: 2 });
+});
+```
+
+A dispatched command's **requirement channel is empty**: the handlers' services were discharged where
+the group was registered. Its error channel is exactly what the definition declared, so `catchTag`
+leaves no residue:
+
+```ts
+const handled: Effect.Effect<string, never, never> = orders
+  .PlaceOrder({ orderId: "ord_1", quantity: 2 })
+  .pipe(Effect.catchTag("OrderNotFound", (e) => Effect.succeed(`missing:${e.orderId}`)));
+```
+
+Handlers observe the **dispatching fiber's** context, which is what lets a command dispatched from
+inside a caller's transaction join it rather than opening its own. If the caller and the handler layer
+both supply the same service, the caller's wins.
+
+## Spans and middleware
+
+Each dispatch opens one span, `command.<tag>`, nested under whatever span the caller is already in.
+Attributes come from a per-tag extractor rather than from the payload wholesale — a payload can carry
+a bearer token or an opaque subject id, and a span is the last place that should end up:
+
+```ts
+const orders = Effect.gen(function* () {
+  return yield* Command.dispatcher(OrderCommands, {
+    spanAttributes: {
+      PlaceOrder: (payload) => ({ "order.quantity": payload.quantity }),
+    },
+    middleware: [Middleware.metrics()],
+  });
+});
+```
+
+Omitting a tag is the safe default: no attributes are added. See
+[Middleware](/effect-server-utils/cqrs/middleware/).
+
+## The application-wide bus
+
+```ts
+import { CommandBus } from "@effect-server-utils/cqrs";
+
+const placeOrder = Effect.gen(function* () {
+  const bus = yield* CommandBus;
+  return yield* bus.execute(PlaceOrder, { orderId: "ord_1", quantity: 2 });
+});
+```
+
+`execute` takes the **definition** plus its payload and hands back exactly the channels the definition
+declares. `CommandBusShape.tags` exposes every tag the bus routes, for diagnostics and boot assertions;
+dispatching never consults it.
+
+`Command.Any` carries the write side in its type, so passing a query definition here does not compile.
+
+## Reflection helpers
+
+`Command.is` and `Command.isGroup` let a host reflect over its own module barrels and check that every
+message it publishes actually made it into a group. That is the one completeness question a bus cannot
+answer for you — a definition nobody put in a group is invisible to every bus.
+
+## Type reference
+
+| Export                                             | What it is                                             |
+| -------------------------------------------------- | ------------------------------------------------------ |
+| `Command.make(tag, options?)`                      | declares a command                                     |
+| `Command.group(...commands)`                       | a module's slice of the write side                     |
+| `Command.handlersOf(group, handlers)`              | `Layer<Registered<G>, never, HandlerServices<G, H>>`   |
+| `Command.dispatcher(group, options?)`              | `Effect<Dispatcher<G>, never, Scope \| Registered<G>>` |
+| `Command.is` / `Command.isGroup`                   | runtime predicates for reflection                      |
+| `Command.Payload<M>` / `Success<M>` / `Failure<M>` | a message's three channels                             |
+| `Command.Any` / `Command.AnyGroup`                 | erased forms, for constraints                          |
+| `Command.Side`                                     | the literal `"command"`                                |

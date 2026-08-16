@@ -1,0 +1,171 @@
+---
+title: Events and the event bus
+description: One bus, three delivery contracts, chosen at subscription rather than at dispatch.
+---
+
+An event is the third message kind, and the one that fans out: many handlers may answer one event,
+where a command and a query each have exactly one.
+
+## Declaring
+
+```ts
+import * as Schema from "effect/Schema";
+import { Event } from "@effect-server-utils/cqrs";
+
+const OrderPlaced = Event.make("OrderPlaced", {
+  orderId: Schema.String,
+  customerId: Schema.String,
+});
+
+const event = OrderPlaced.make({ orderId: "ord_1", customerId: "cus_1" });
+```
+
+An event **holds** its schema rather than being one. A definition that was itself a schema could be
+annotated, made optional, or piped — and each of those returns a new schema carrying neither the tag
+nor the brand, so it would quietly stop being an event with nothing to say so. `make` and `Type` are
+forwarded because constructing an event and naming the value it carries are what nearly every call site
+does; `.schema` is there for the rare one that genuinely wants a schema.
+
+The value is plain data, not a class instance, so its in-memory shape and its serialized shape are the
+same. That is what lets one definition describe an event dispatched in-process today and one read back
+off a durable log later.
+
+`Event.Base` is the minimum a bus routes on — `{ readonly _tag: string }`. It is deliberately that
+small because a consumer's domain layer references it, and anything more would be a dependency it did
+not ask for.
+
+## The design: subscriptions choose, not dispatch
+
+```ts
+const publish = Effect.gen(function* () {
+  const eventBus = yield* EventBus;
+  yield* eventBus.dispatch([OrderPlaced.make({ orderId, customerId })]);
+});
+```
+
+That is the entire producer-side API. A producer knows what happened; it does not know who is
+listening, and in a layered application it is often forbidden to. Letting it pick the consistency model
+would mean deciding, on behalf of consumers it cannot name, whether their failure may undo its own
+write.
+
+So `dispatch` says only "these events happened", and each **subscriber** declares what it needs.
+
+### `subscribe` — same transaction
+
+Runs in the publisher's fiber, in registration order, inside its unit of work. The handler's writes
+commit with the publisher's, and **its failure rolls the publisher back**.
+
+```ts
+const subscriptions = Effect.gen(function* () {
+  const eventBus = yield* EventBus;
+  yield* eventBus.subscribe(OrganizationCreated, (event) =>
+    wallets.createFor(event.organizationId),
+  );
+});
+```
+
+This is the contract for a reaction that is part of the same logical operation — a wallet must not
+exist without its organization.
+
+### `subscribeAfterCommit` — after the fact, isolated
+
+Runs after the outermost unit of work commits, each handler in a fresh unit of work, its failure logged
+and isolated.
+
+```ts
+const subscriptions = Effect.gen(function* () {
+  const eventBus = yield* EventBus;
+  yield* eventBus.subscribeAfterCommit(OrderPlaced, (event) => email.sendReceipt(event.orderId));
+});
+```
+
+The failure direction is the opposite of `subscribe`, by design: the producer has already committed, so
+a reaction must not undo it. Handlers here are expected to be **idempotent and independently
+retryable**. Failures go to [`UnhandledFailures`](/effect-server-utils/cqrs/unhandled-failures/).
+
+### `stream` — never awaited
+
+Subscribes to the given tags and hands back a stream. Only events broadcast while subscribed arrive:
+nothing is replayed, and nothing accumulates for a stream no one is reading.
+
+```ts
+const consume = Effect.gen(function* () {
+  const eventBus = yield* EventBus;
+  const events = yield* eventBus.stream(["OrderPlaced", "PaymentSettled"]);
+  // ...
+});
+```
+
+Subscribing is an effect rather than a property of the stream because _when_ it happens is observable —
+a consumer that subscribed lazily, on first pull, would miss everything broadcast between its
+construction and that pull. The subscription lives as long as the ambient scope.
+
+This is a third surface rather than a flag on `subscribeAfterCommit` because the delivery contracts
+genuinely differ: an after-commit handler is awaited and its failure isolated, while a stream consumer
+may be a [saga](/effect-server-utils/cqrs/sagas/) that runs for days and must never hold up a flush.
+
+### At a glance
+
+|                          | `subscribe`              | `subscribeAfterCommit` | `stream`                     |
+| ------------------------ | ------------------------ | ---------------------- | ---------------------------- |
+| Runs in                  | publisher's fiber        | its own unit of work   | its own fiber                |
+| Timing                   | before commit            | after commit           | after commit                 |
+| Failure                  | rolls the publisher back | logged and isolated    | reported, saga keeps running |
+| Awaited by the publisher | yes                      | yes                    | no                           |
+
+## Dispatching requires a unit of work
+
+```ts
+class EventDispatchedOutsideUnitOfWork {
+  readonly tags: ReadonlyArray<string>;
+}
+```
+
+`dispatch` outside an open unit of work is a **defect**. Absent one, the immediate subscribers would
+have no transaction to inherit and the eventual ones would buffer onto nothing — so a missing scope
+almost always means a forgotten boundary, and failing loudly beats delivering quietly different
+semantics. It is a _tagged_ defect so a test can name the condition rather than match a sentence.
+
+Ordering within a dispatch is deliberate: immediate handlers run first, and events are buffered for
+after-commit delivery **only once those have succeeded**. Their failure aborts the publisher, so there
+would be nothing left to notify after a commit that is no longer going to happen.
+
+## Building the bus
+
+```ts
+import { makeEventBus, Event } from "@effect-server-utils/cqrs";
+
+const OrderSpanAttributes = Event.spanAttributes({
+  OrderPlaced: (event: typeof OrderPlaced.Type) => ({ "order.id": event.orderId }),
+});
+
+const EventBusLive = makeEventBus({
+  spanAttributes: { ...OrderSpanAttributes, ...BillingSpanAttributes },
+});
+```
+
+Each dispatched event opens an `event.<tag>` span carrying `event.tag`, `event.handler.count`, and
+whatever the tag's registered extractor returned. Modules declare their own contributions with
+`Event.spanAttributes` (a type-checked identity function, so a contribution is validated where it is
+written) and they are merged where the bus is built — the same way dispatch surfaces are.
+
+Subscriptions are registered while layers are built, so the registries are only mutated during
+composition and are read-only by the time anything dispatches.
+
+The broadcast buffer feeding `stream` is unbounded, so a broadcast never blocks a flush. A bounded
+buffer would either block the publisher or drop silently; a consumer that stops consuming instead shows
+up as its own subscription queue growing, which is a diagnosable bug rather than lost events.
+
+## Type reference
+
+| Export                             | What it is                                         |
+| ---------------------------------- | -------------------------------------------------- |
+| `Event.make(tag, fields)`          | declares an event                                  |
+| `Event.Base`                       | `{ readonly _tag: string }` — what a bus routes on |
+| `Event.Type<E>`                    | the value an event carries                         |
+| `Event.spanAttributes(map)`        | type-checked per-tag attribute extractors          |
+| `Event.is`                         | runtime predicate, for reflection                  |
+| `EventBus` / `EventBusShape`       | the bus service                                    |
+| `makeEventBus(options?)`           | builds it                                          |
+| `EventHandler`                     | `(event: Event.Base) => Effect<void>`              |
+| `EventDispatchedOutsideUnitOfWork` | tagged defect                                      |

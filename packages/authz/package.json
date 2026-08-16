@@ -1,0 +1,54 @@
+{
+  "name": "@effect-server-utils/authz",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "description": "Declarative per-route authorization for Effect: policy checks registered against (resource, action) pairs, per-request resource resolution, and composable check combinators",
+  "author": "zacharyweidenbach",
+  "keywords": [
+    "effect",
+    "effect-ts",
+    "authorization",
+    "authz",
+    "access-control",
+    "policy",
+    "typescript"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dataquail/effect-server-utils.git",
+    "directory": "packages/authz"
+  },
+  "homepage": "https://dataquail.github.io/effect-server-utils",
+  "scripts": {
+    "build": "pnpm build-esm && pnpm build-annotate && pnpm build-cjs && build-utils pack-v2",
+    "build-esm": "tsc -b tsconfig.build.json",
+    "build-cjs": "babel build/esm --plugins @babel/transform-export-namespace-from --plugins @babel/transform-modules-commonjs --out-dir build/cjs --source-maps",
+    "build-annotate": "babel build/esm --plugins annotate-pure-calls --out-dir build/esm --source-maps",
+    "check": "tsc -b tsconfig.json",
+    "test": "vitest run",
+    "coverage": "vitest run --coverage"
+  },
+  "peerDependencies": {
+    "effect": "4.0.0-beta.94"
+  },
+  "devDependencies": {
+    "effect": "4.0.0-beta.94"
+  },
+  "effect": {
+    "generateExports": {
+      "include": [
+        "*.ts"
+      ],
+      "exclude": [
+        "*.test.ts"
+      ]
+    }
+  },
+  "nx": {
+    "includedScripts": []
+  }
+}

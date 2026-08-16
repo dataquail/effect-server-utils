@@ -1,0 +1,56 @@
+{
+  "name": "@effect-server-utils/cqrs",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "description": "Typed CQRS for Effect: command and query buses with per-message success and error types, an event bus whose subscriptions choose their consistency model, a unit-of-work port, and process managers",
+  "author": "zacharyweidenbach",
+  "keywords": [
+    "effect",
+    "effect-ts",
+    "cqrs",
+    "command-bus",
+    "query-bus",
+    "event-bus",
+    "unit-of-work",
+    "saga",
+    "typescript"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dataquail/effect-server-utils.git",
+    "directory": "packages/cqrs"
+  },
+  "homepage": "https://dataquail.github.io/effect-server-utils",
+  "scripts": {
+    "build": "pnpm build-esm && pnpm build-annotate && pnpm build-cjs && build-utils pack-v2",
+    "build-esm": "tsc -b tsconfig.build.json",
+    "build-cjs": "babel build/esm --plugins @babel/transform-export-namespace-from --plugins @babel/transform-modules-commonjs --out-dir build/cjs --source-maps",
+    "build-annotate": "babel build/esm --plugins annotate-pure-calls --out-dir build/esm --source-maps",
+    "check": "tsc -b tsconfig.json",
+    "test": "vitest run",
+    "coverage": "vitest run --coverage"
+  },
+  "peerDependencies": {
+    "effect": "4.0.0-beta.94"
+  },
+  "devDependencies": {
+    "effect": "4.0.0-beta.94"
+  },
+  "effect": {
+    "generateExports": {
+      "include": [
+        "*.ts"
+      ],
+      "exclude": [
+        "*.test.ts"
+      ]
+    }
+  },
+  "nx": {
+    "includedScripts": []
+  }
+}

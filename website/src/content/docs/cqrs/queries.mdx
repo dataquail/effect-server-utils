@@ -1,0 +1,76 @@
+---
+title: Queries
+description: The read side — same machinery as commands, separated at the type level.
+---
+
+A query is a read-side message. The API mirrors [commands](/effect-server-utils/cqrs/commands/) exactly:
+
+```ts
+import * as Schema from "effect/Schema";
+import { Query, QueryBus } from "@effect-server-utils/cqrs";
+
+const GetOrder = Query.make("GetOrder", {
+  payload: { orderId: Schema.String },
+  success: OrderView,
+  failure: OrderNotFound,
+});
+
+const OrderQueries = Query.group(GetOrder, ListOrders);
+
+export const OrderQueryHandlers = Query.handlersOf(OrderQueries, {
+  GetOrder: (payload) => orderReadModel.byId(payload.orderId),
+  ListOrders: (payload) => orderReadModel.page(payload),
+});
+
+// within the module
+const withinModule = Effect.gen(function* () {
+  const queries = yield* Query.dispatcher(OrderQueries);
+  return yield* queries.GetOrder({ orderId: "ord_1" });
+});
+
+// application-wide
+const anywhere = Effect.gen(function* () {
+  const bus = yield* QueryBus;
+  return yield* bus.execute(GetOrder, { orderId: "ord_1" });
+});
+```
+
+Each dispatch opens a `query.<tag>` span rather than `command.<tag>`, and `makeQueryBus` builds the
+read-side bus from a routing table the same way `makeCommandBus` builds the write-side one.
+
+## Why two facades and not one
+
+`Command` and `Query` are thin facades over shared machinery — dispatching them differs in exactly two
+ways, the side they belong to and the span they open. They are kept apart anyway, because the side is
+carried in the type:
+
+```ts
+Query.group(PlaceOrder);        // ✗ a command in a query group
+commandBus.execute(GetOrder, …) // ✗ a query definition on the write-side bus
+```
+
+That is the CQRS distinction expressed as something the compiler enforces, rather than a naming
+convention a reviewer has to catch.
+
+## One asymmetry worth knowing
+
+A query resolved **inside a caller's transaction reads through that transaction**, because handlers run
+in the dispatching fiber. An authorization check resolved during a mutation therefore sees that
+mutation's uncommitted writes rather than a stale view.
+
+That is usually what you want — a policy check that cannot see the row the same operation just wrote
+would be wrong more often than right. It is worth knowing when a read model is populated
+asynchronously: inside the transaction you are reading the write side's view of the world.
+
+## Type reference
+
+| Export                              | What it is                                             |
+| ----------------------------------- | ------------------------------------------------------ |
+| `Query.make(tag, options?)`         | declares a query                                       |
+| `Query.group(...queries)`           | a module's slice of the read side                      |
+| `Query.handlersOf(group, handlers)` | `Layer<Registered<G>, never, HandlerServices<G, H>>`   |
+| `Query.dispatcher(group, options?)` | `Effect<Dispatcher<G>, never, Scope \| Registered<G>>` |
+| `Query.is` / `Query.isGroup`        | runtime predicates for reflection                      |
+| `QueryBus` / `QueryBusShape`        | the application-wide read-side bus                     |
+| `makeQueryBus(table, options?)`     | builds it from a routing table                         |
+| `Query.Side`                        | the literal `"query"`                                  |

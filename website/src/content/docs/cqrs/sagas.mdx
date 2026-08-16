@@ -1,0 +1,96 @@
+---
+title: Sagas
+description: Process managers over after-commit events — for when no single event is enough to decide.
+---
+
+A saga is a long-running process manager: it watches eventual events over time and decides what to do
+when a _combination_ of them has arrived.
+
+## Reach for an adapter first
+
+A stateless event adapter translates one event into one command. A saga correlates several, waits for
+one that may never come, and compensates when a later step fails.
+
+Most reactions are the first kind. A saga earns its state only when no single event decides — and it
+costs you atomicity, so it is worth being sure.
+
+## Declaring
+
+```ts
+import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
+import { Saga } from "@effect-server-utils/cqrs";
+
+const OrderFulfillment = Saga.make({
+  name: "OrderFulfillment",
+  events: [OrderPlaced, PaymentSettled, ShipmentFailed],
+  run: (events) =>
+    events.pipe(
+      Stream.runForEach((event) =>
+        Effect.gen(function* () {
+          switch (event._tag) {
+            case "OrderPlaced":
+              return yield* remember(event.orderId);
+            case "PaymentSettled":
+              return yield* dispatchShipment(event.orderId);
+            case "ShipmentFailed":
+              return yield* refund(event.orderId);
+          }
+        }),
+      ),
+    ),
+});
+```
+
+`events` are the tags it watches; `run` receives them as a stream typed as the union of exactly those
+events.
+
+**`run` must not fail.** Its error channel is `never`, and that is not an oversight. A process manager
+that can end in an unhandled error has no one to report to — the producer committed long ago — so the
+compensating action is part of the saga's job, and the empty channel is what forces that decision to be
+made rather than deferred.
+
+## Running
+
+```ts
+const SagasLive = Saga.runner(OrderFulfillment, SubscriptionRenewal);
+```
+
+Sagas run for as long as the layer lives. Each is forked from **this layer's scope**, not from whatever
+fiber happens to publish an event — which is what makes transaction inheritance impossible rather than
+merely discouraged. The fiber's context is the one the layer was built with, and it holds no publisher's
+scope to inherit. Nothing has to be scrubbed, so nothing can be forgotten.
+
+Each saga subscribes before the layer finishes building, so it cannot miss an event published by the
+first unit of work to commit after boot. Each runs inside a `saga.<name>` span.
+
+A saga that dies takes only itself down and is reported to
+[`UnhandledFailures`](/effect-server-utils/cqrs/unhandled-failures/) — one saga's bug must not silently
+stop the others. Interruption is _not_ reported: every saga fiber is interrupted when the layer's scope
+closes, so treating that as a failure would announce each saga as broken on every clean shutdown, which
+is exactly the noise that trains people to ignore the channel.
+
+## No shared transaction, by design
+
+A saga never runs inside the transaction of whatever published its events, and cannot. Each command it
+dispatches therefore opens its own unit of work.
+
+That is not a limitation being worked around — it is the pattern. Holding one transaction open across a
+process that waits for a payment is the thing sagas exist to avoid, which is why they trade atomicity
+for compensation.
+
+:::caution[Delivery is in-memory and lossy across a restart]
+A saga's state lives in the fiber running it, and its events arrive over a subscription with no replay,
+so a process death loses whatever was in flight. That is the same durability boundary the eventual
+event bus already has, and a durable event log fixes both at once. Until then, keep a saga's decisions
+idempotent.
+:::
+
+## Type reference
+
+| Export                  | What it is                                     |
+| ----------------------- | ---------------------------------------------- |
+| `Saga.make(definition)` | declares a saga — `{ name, events, run }`      |
+| `Saga.runner(...sagas)` | `Layer<never, never, EventBus \| Services<…>>` |
+| `Saga.Any`              | erased form, for constraints                   |
+| `Saga.Services<S>`      | the services a saga requires                   |

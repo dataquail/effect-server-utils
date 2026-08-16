@@ -1,0 +1,45 @@
+{
+  "name": "@effect-server-utils/authz",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "packages/authz/src",
+  "projectType": "library",
+  "targets": {
+    "build": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "dependsOn": ["^build"],
+      "inputs": ["production", "^production"],
+      "outputs": ["{projectRoot}/build", "{projectRoot}/dist", "{projectRoot}/.tsbuildinfo"],
+      "options": {
+        "command": "pnpm run build",
+        "cwd": "packages/authz"
+      }
+    },
+    "check": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "outputs": ["{projectRoot}/.tsbuildinfo"],
+      "options": {
+        "command": "pnpm run check",
+        "cwd": "packages/authz"
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "options": {
+        "command": "pnpm run test",
+        "cwd": "packages/authz"
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "options": {
+        "command": "pnpm exec oxlint --type-aware --quiet packages/authz",
+        "cwd": "{workspaceRoot}"
+      }
+    }
+  },
+  "tags": []
+}

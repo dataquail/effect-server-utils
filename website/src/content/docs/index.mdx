@@ -1,0 +1,58 @@
+---
+title: Effect Server Utils
+description: Server-side building blocks for Effect — typed CQRS buses and declarative per-route authorization.
+template: splash
+hero:
+  tagline: Two packages that carry the parts of a server application Effect leaves to you — how messages are dispatched, and who is allowed to send them.
+  actions:
+    - text: Get Started
+      link: /effect-server-utils/getting-started/introduction/
+      icon: right-arrow
+      variant: primary
+    - text: View on GitHub
+      link: https://github.com/dataquail/effect-server-utils
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from "@astrojs/starlight/components";
+
+<CardGrid>
+  <Card title="@effect-server-utils/cqrs" icon="random">
+    Command and query buses whose success and error channels come from the message
+    definition, an event bus where the **subscription** picks the consistency model,
+    a unit-of-work port over your own transaction primitive, and process managers.
+
+    [Read the overview →](/effect-server-utils/cqrs/)
+
+  </Card>
+  <Card title="@effect-server-utils/authz" icon="approve-check">
+    One call at the boundary — `hasPermissions("todo", "update", id)` — over policy
+    checks registered against `(resource, action)` pairs, with per-request resource
+    resolution and composable check combinators.
+
+    [Read the overview →](/effect-server-utils/authz/)
+
+  </Card>
+</CardGrid>
+
+<CardGrid>
+  <Card title="Typed end to end" icon="seti:typescript">
+    A handler that returns the wrong thing does not compile. A caller reads both the success and the
+    error channel off the message definition, so there is no side table keyed by tag that a
+    declaration could quietly drift from.
+  </Card>
+  <Card title="Hosts own their vocabulary" icon="setting">
+    Neither package names an HTTP status, a session type, a SQL dialect, or an action taxonomy.
+    Those arrive through explicit seams: a `TransactionDriver` you supply, an `AuthzConfig` you
+    augment.
+  </Card>
+  <Card title="Wiring errors surface at boot" icon="warning">
+    A module whose dispatch surface was never merged fails at startup with a tagged defect naming
+    the unroutable tags — not on a rarely-exercised path in production.
+  </Card>
+  <Card title="Independently versioned" icon="open-book">
+    Two packages, published on their own cadences. Take the one you need; neither depends on the
+    other.
+  </Card>
+</CardGrid>

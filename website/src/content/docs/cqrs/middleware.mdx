@@ -1,0 +1,139 @@
+---
+title: Middleware
+description: Behaviour applied once around every dispatch — spans, metrics, deadlines — under one constraint.
+---
+
+Middleware is the seam that makes tracing, metrics, and audit logging properties of the bus rather than
+obligations on its callers.
+
+```ts
+type Middleware = <A, E>(
+  dispatch: (payload: never) => Effect.Effect<A, E>,
+  context: DispatchContext, // { tag, side }
+) => (payload: never) => Effect.Effect<A, E>;
+```
+
+Middleware is applied in the order given, outermost first.
+
+## The one constraint
+
+**A middleware may not change the success or error channels.** Look at the signature: `A` and `E` go in
+and the same `A` and `E` come out.
+
+That constraint is the whole reason the typed bus survives having a seam. A caller's inferred type comes
+from the message definition, so anything able to widen `E` here would silently invalidate every
+`catchTag` written against it.
+
+Retry, timeout with a fallback, logging, metrics, and spans all fit. **Validation does not** — it
+introduces a decode failure the definition never declared. That is why schema compatibility is asserted
+[in tests](/effect-server-utils/cqrs/testing/) instead of enforced at dispatch.
+
+## `Middleware.span` — installed by default
+
+Every `Command.dispatcher` and `Query.dispatcher` installs this outermost, so a caller's own middleware
+runs _inside_ the dispatch span and its work is attributed there rather than to whatever ran before it.
+
+It opens one span per dispatch, named `<side>.<tag>`, nested under whatever span the caller is already
+in.
+
+```ts
+const orders = Effect.gen(function* () {
+  return yield* Command.dispatcher(OrderCommands, {
+    spanAttributes: {
+      PlaceOrder: (payload) => ({ "order.quantity": payload.quantity }),
+    },
+  });
+});
+```
+
+Attributes come from a per-tag extractor rather than from the payload wholesale, so only fields whose
+author has audited them reach a span. **Omitting a tag is the safe default** — a payload can carry a
+bearer token or an opaque subject id, and a span is the last place that should end up.
+
+`SpanAttributeValue` is `string | number | boolean`, deliberately narrower than `unknown`: an attribute
+that cannot be represented is silently dropped by most exporters, which is worse than not compiling.
+Every registry in the package — commands, queries, events — is built from that one type, so an extractor
+that would be dropped fails to compile where it is written.
+
+## `Middleware.metrics()` — opt-in
+
+Counts and times every dispatch, tagged by message and outcome.
+
+```ts
+const orders = Effect.gen(function* () {
+  return yield* Command.dispatcher(OrderCommands, {
+    middleware: [Middleware.metrics()],
+  });
+});
+```
+
+| Metric                   | Type    | Dimensions                              |
+| ------------------------ | ------- | --------------------------------------- |
+| `cqrs_dispatch_total`    | counter | `cqrs.tag`, `cqrs.side`, `cqrs.outcome` |
+| `cqrs_dispatch_duration` | timer   | `cqrs.tag`, `cqrs.side`                 |
+
+Both are exported as `Middleware.dispatchTotal` and `Middleware.dispatchDuration`, because a metric's
+name and dimensions are a public contract the moment they reach a dashboard.
+
+Both a failure and a success are recorded, and the duration is measured across either — timing only the
+successes would flatter exactly the messages whose latency matters most, since a slow failure is still
+a slow request.
+
+## `Middleware.deadline(duration)` — opt-in
+
+Gives every dispatch a time limit and aborts the handler when it expires. The timeout interrupts from
+inside the dispatching fiber, which reaches the handler and rolls back the transaction it was running
+in.
+
+```ts
+const orders = Effect.gen(function* () {
+  return yield* Command.dispatcher(OrderCommands, {
+    middleware: [Middleware.deadline("5 seconds")],
+  });
+});
+```
+
+Expiry is raised as a **defect**, `DeadlineExceeded`, not a failure: a caller's error handling comes
+from the message definition, and a deadline is a property of how the _host_ chose to dispatch. No
+definition declares it, so no call site can be expected to handle it.
+
+```ts
+class DeadlineExceeded {
+  readonly tag: string;
+  readonly side: string;
+  readonly after: string;
+}
+```
+
+It is not installed by default because what a sensible limit is — and whether abandoning work partway
+is better than finishing it — are decisions only the host can make. It also exists to make that limit a
+property of the bus, not because a dispatch is otherwise uncancellable: external interruption reaches a
+handler too, so a caller's own `Effect.timeout` or a client hanging up abort it just the same.
+
+## Writing your own
+
+```ts
+const auditLog =
+  (audit: AuditSink): Middleware =>
+  (dispatch, context) =>
+  (payload) =>
+    dispatch(payload).pipe(
+      Effect.tap(() => audit.record({ tag: context.tag, side: context.side })),
+    );
+```
+
+Keep `A` and `E` untouched and it composes with everything else.
+
+## Type reference
+
+| Export                                          | What it is                               |
+| ----------------------------------------------- | ---------------------------------------- |
+| `Middleware.Middleware`                         | the middleware type                      |
+| `Middleware.DispatchContext`                    | `{ tag, side }`                          |
+| `Middleware.span(options)`                      | installed by default by both dispatchers |
+| `Middleware.metrics()`                          | counter + timer, opt-in                  |
+| `Middleware.deadline(duration)`                 | time limit, opt-in                       |
+| `Middleware.DeadlineExceeded`                   | the defect a deadline raises             |
+| `Middleware.dispatchTotal` / `dispatchDuration` | the metrics `metrics()` writes to        |
+| `Middleware.SpanAttributeValue`                 | `string \| number \| boolean`            |
+| `Middleware.AttributeExtractors`                | per-tag extractors, keyed by tag         |

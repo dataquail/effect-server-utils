@@ -1,0 +1,104 @@
+---
+title: Dispatch tables
+description: Folding every module's dispatch surface into the one table a bus routes through — and the three ways that can be wrong.
+---
+
+A `DispatchTable` is the erased routing table a bus dispatches through: a message tag mapped to a
+function whose requirements are already discharged.
+
+```ts
+type DispatchTable = Readonly<
+  Record<string, (payload: never) => Effect.Effect<unknown, unknown, never>>
+>;
+```
+
+It restates no message's signature. It does not need to — `bus.execute` reads the signature off the
+definition its caller passes, and each module's `handlersOf` already checked its handlers against those
+same definitions. The by-tag lookup is what makes the erasure safe.
+
+## Composing at the root
+
+```ts
+import { makeCommandBus, mergeDispatchTables } from "@effect-server-utils/cqrs";
+
+const table = mergeDispatchTables(orderDispatcher, billingDispatcher, inventoryDispatcher);
+
+const bus = makeCommandBus(table, {
+  declaredIn: [OrderCommands, BillingCommands, InventoryCommands],
+});
+```
+
+Modules are composed in dependency order and unified only here. That ordering is what lets a module
+whose handlers reach another module resolve against _that module's dispatcher_ rather than against the
+whole bus — which would otherwise be a cycle.
+
+`makeCommandBus` and `makeQueryBus` belong at a composition root and nowhere else. They take the whole
+routing table, so anything else that built one could answer a message with a different module's handler
+than the composed application would.
+
+## The three ways a table can be wrong
+
+All three are wiring mistakes rather than anything a call site can act on, so they arrive as **defects**
+— but as _tagged_ ones, because "the application is mis-wired" is exactly the condition a boot check or
+a test wants to match on rather than parse out of a message string.
+
+### `DuplicateDispatchTag`
+
+Two modules claim the same tag. Thrown by `mergeDispatchTables`, at composition time.
+
+```ts
+class DuplicateDispatchTag {
+  readonly tag: string;
+}
+```
+
+Now that the table is erased, nothing catches this at compile time — this check is the only guard. The
+alternative is worse than an error: the later contribution silently wins and a message is answered by
+the wrong module.
+
+### `UnroutableTags`
+
+A group declared a tag that nothing in the table answers. Thrown by `makeCommandBus` / `makeQueryBus`
+when you pass `declaredIn`, at boot.
+
+```ts
+class UnroutableTags {
+  readonly bus: string;
+  readonly tags: ReadonlyArray<string>;
+}
+```
+
+This is the gap the erasure leaves. A module whose dispatch surface was never merged still lets every
+call site compile, and the first dispatch of one of its tags dies — possibly in production, on a rarely
+exercised path. Passing `declaredIn` turns that into a startup failure, where it is cheap.
+
+It cannot see a definition that was never put in a group at all; nothing reachable from a bus can. That
+question belongs to whoever owns the modules, and `Command.is` / `Query.is` are what let them ask it.
+
+### `MissingHandler`
+
+A dispatch reached a bus for a tag its table has no entry for. Raised at dispatch, as a defect.
+
+```ts
+class MissingHandler {
+  readonly bus: string;
+  readonly tag: string;
+}
+```
+
+If you passed `declaredIn`, this is the case `UnroutableTags` did not catch — a definition dispatched
+that belongs to no declared group.
+
+## Asserting your wiring in a test
+
+Because all three are values, a host can assert the shape of its own composition:
+
+```ts
+it("every declared command is routable", () => {
+  const bus = makeCommandBus(table, { declaredIn: allCommandGroups });
+  deepStrictEqual(bus.tags.size, expectedTagCount);
+});
+```
+
+`CommandBusShape.tags` and `QueryBusShape.tags` expose every tag the bus routes, for exactly this. It
+is diagnostics only — dispatching never consults it.

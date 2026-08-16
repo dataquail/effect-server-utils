@@ -1,0 +1,74 @@
+---
+title: Introduction
+description: What Effect Server Utils is, what problem each package solves, and when to reach for them.
+---
+
+Effect Server Utils is two independently published packages that carry parts of a server application
+Effect deliberately leaves to you.
+
+## `@effect-server-utils/cqrs`
+
+Effect gives you a way to describe an effectful computation and a way to compose services. It does not
+give you an opinion about how one module asks another to do something, or about where the atomicity
+boundary of a logical operation sits. Most codebases answer that by exporting functions directly
+between modules — which works until the call graph is the architecture, and there is no seam left to
+put tracing, metrics, or a transaction boundary through.
+
+A message bus is the usual answer, and the usual bus is stringly typed: `bus.dispatch("PlaceOrder",
+payload)` returns `Promise<unknown>` and every caller casts. This package keeps the seam and the types:
+
+```ts
+const placeOrder = Effect.gen(function* () {
+  const receipt = yield* commandBus.execute(PlaceOrder, { orderId });
+  //    ^? string, failing with OrderNotFound
+});
+```
+
+The signature is read off the `PlaceOrder` definition the caller passes, so there is no lookup table
+a declaration could drift from, and no cast at any call site.
+
+Around that it adds the things a bus is the natural place for: [an event bus whose _subscriptions_
+choose their consistency model](/effect-server-utils/cqrs/events/), [a unit-of-work boundary](/effect-server-utils/cqrs/unit-of-work/)
+over a transaction primitive you supply, [process managers](/effect-server-utils/cqrs/sagas/), and
+[middleware](/effect-server-utils/cqrs/middleware/) that cannot widen a message's error channel.
+
+## `@effect-server-utils/authz`
+
+Authorization tends to end up in one of two bad places: scattered through handlers as ad-hoc `if`
+statements, or centralised in a framework that decides for you what a "resource" and an "action" are.
+
+This package is the mechanism without the taxonomy. An inbound adapter makes one call:
+
+```ts
+const updateTodo = Effect.gen(function* () {
+  yield* hasPermissions("todo", "update", todoId);
+  // ...
+});
+```
+
+Everything behind it is registration — which checks answer for which `(resource, action)` pair, and
+how a scoped resource is loaded before its checks run. The four types the library cannot supply for
+itself (who the caller is, what a check may fail with, how absence is reported, and which verbs exist)
+arrive through [a single declaration-merged config seam](/effect-server-utils/authz/configuration/).
+Whether your model is CRUD or a set of domain verbs stays your decision.
+
+## What they assume
+
+- **Effect 4** (currently `4.0.0-beta.94`, declared as an exact peer dependency).
+- **ESM or CJS** — both are published, with type declarations for each.
+- **Nothing about your datastore.** The CQRS package's unit of work is written against a
+  `TransactionDriver` interface with three members; the SQL is yours.
+
+## What they are not
+
+Neither package is a framework. There is no application bootstrapper, no HTTP layer, no migration
+runner, no dependency-injection container beyond Effect's own. They are libraries you compose at your
+own composition root, and both are designed so that a wiring mistake fails at boot rather than on the
+first request that exercises it.
+
+## Where they came from
+
+Both were extracted from a production Effect codebase built on a functional domain-driven hexagonal
+architecture, where they had already been through several rounds of use. The commentary in the source
+is unusually dense for that reason — most non-obvious decisions have a note explaining what the
+alternative was and why it lost.

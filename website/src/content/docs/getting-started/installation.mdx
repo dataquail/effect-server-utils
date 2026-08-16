@@ -1,0 +1,99 @@
+---
+title: Installation
+description: Installing the packages, the Effect peer dependency, and the TypeScript settings they expect.
+---
+
+import { Tabs, TabItem } from "@astrojs/starlight/components";
+
+## Install
+
+The two packages are independent — install either or both.
+
+<Tabs syncKey="pkg">
+  <TabItem label="pnpm">
+
+```sh
+pnpm add @effect-server-utils/cqrs effect
+pnpm add @effect-server-utils/authz effect
+```
+
+  </TabItem>
+  <TabItem label="npm">
+
+```sh
+npm install @effect-server-utils/cqrs effect
+npm install @effect-server-utils/authz effect
+```
+
+  </TabItem>
+  <TabItem label="yarn">
+
+```sh
+yarn add @effect-server-utils/cqrs effect
+yarn add @effect-server-utils/authz effect
+```
+
+  </TabItem>
+</Tabs>
+
+## The Effect peer dependency
+
+`effect` is declared as an **exact** peer dependency on the beta these packages are built against:
+
+```json
+"peerDependencies": {
+  "effect": "4.0.0-beta.94"
+}
+```
+
+Effect 4 is still in beta and its pre-release versions are not compatible with one another. Pinning
+exactly is what keeps a mismatched `effect` in your lockfile from surfacing as a type error deep
+inside a schema signature. When you move to a newer beta, expect to move both packages with it.
+
+## TypeScript
+
+Both packages ship ESM and CJS builds with declarations for each, and use conditional `exports`. That
+means `moduleResolution` has to be one that reads `exports` — `"NodeNext"`, `"Node16"`, or
+`"Bundler"`. The classic `"Node"` resolution will not find the types.
+
+```json title="tsconfig.json"
+{
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "target": "ES2022",
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true
+  }
+}
+```
+
+`strict` is not optional in practice: both packages lean on discriminated unions and conditional types
+whose whole purpose is to make a wrong wiring fail to compile, and most of that evaporates without it.
+
+## Subpath imports
+
+Every top-level module is also reachable on its own subpath, which is useful when you want one symbol
+without pulling the barrel:
+
+```ts
+import { Command } from "@effect-server-utils/cqrs";
+// or
+import * as Command from "@effect-server-utils/cqrs/command";
+```
+
+One subpath is deliberately **not** in the barrel:
+
+```ts
+import { checkSerializable } from "@effect-server-utils/cqrs/testing";
+```
+
+The testing helpers derive sample values with a property-testing runtime. Reached through the barrel
+it would ride into every consumer's production bundle for a check that only ever runs in a test, so it
+lives behind its own entry point. See [Testing](/effect-server-utils/cqrs/testing/).
+
+## Next steps
+
+- [CQRS overview](/effect-server-utils/cqrs/) — messages, buses, and how an application is composed.
+- [AuthZ overview](/effect-server-utils/authz/) — the config seam and the one call at the boundary.

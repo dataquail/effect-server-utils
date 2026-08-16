@@ -1,0 +1,126 @@
+---
+title: The adapter
+description: makeHasPermissions — pinning the identity Tag and the denial error, and wiring the result into a route.
+---
+
+`makeHasPermissions` is where a host pins the two things the DSL cannot supply for itself: **the identity
+Tag to read the caller from**, and **the error a denial becomes**.
+
+```ts
+import { makeHasPermissions } from "@effect-server-utils/authz";
+
+export const hasPermissions = makeHasPermissions({
+  caller: CurrentUser,
+  forbidden: (message) => new Forbidden({ message }),
+});
+```
+
+That is what keeps the library from ever naming an HTTP status or a session type.
+
+## The adapter shape
+
+```ts
+type AuthzAdapter<CallerContext, Denied> = {
+  readonly caller: Effect.Effect<Caller, never, CallerContext>;
+  readonly forbidden: (message: string) => Effect.Effect<never, Denied>;
+};
+```
+
+**`caller`** is an Effect producing the identity. A `Context.Key` is already an Effect, so you can pass
+the Tag itself — its identifier becomes the returned function's only added requirement.
+
+**`forbidden`** returns a _failed Effect_ rather than an error value. That means a yieldable error class
+is accepted unchanged, and the denial type is **inferred** rather than declared a second time.
+
+## Calling it
+
+```ts
+const updateTodo = (todoId: TodoId, input: UpdateInput) =>
+  Effect.gen(function* () {
+    yield* hasPermissions("todo", "update", todoId);
+    return yield* commandBus.execute(UpdateTodo, { todoId, ...input });
+  });
+```
+
+The full signature of a call:
+
+```ts
+hasPermissions("todo", "update", todoId);
+// Effect<
+//   void,
+//   Forbidden | PersistenceUnavailable | NotFound,
+//   CurrentUser | PolicyRegistry | ResourceResolverRegistry
+// >
+```
+
+For an unscoped resource, `NotFound` is absent from the error union — there is no unreachable branch to
+defend against.
+
+## What happens on a call
+
+1. The caller is read from your identity Tag.
+2. The `(resource, action)` pair is looked up in the policy registry. **Nothing registered ⇒ defect.**
+3. If an id was passed, the resource is loaded through its resolver. **No resolver registered ⇒ defect**;
+   absence ⇒ your `ResourceMissing`.
+4. The check runs against `(caller, resource)`.
+5. `false` ⇒ `forbidden("Not permitted: todo.update")`. `true` ⇒ succeeds with `void`.
+
+The whole thing runs inside an `authz.hasPermissions.<resource>.<action>` span.
+
+## Wiring at the composition root
+
+```ts
+const AuthzLive = Layer.mergeAll(
+  makePolicyRegistry([TodoPolicies, BillingPolicies]),
+  makeResourceResolverRegistry({
+    todo: (id) => todoRepository.byId(id),
+    organization: (id) => organizationRepository.byId(id),
+  }),
+);
+```
+
+`CurrentUser` comes from wherever your request context is established — an HTTP middleware that decodes
+a session, a job runner that impersonates a system principal.
+
+## Translating a denial at the boundary
+
+Because the denial is _your_ error, the inbound adapter that knows about HTTP is the only place that
+knows about status codes:
+
+```ts
+const route = handler.pipe(
+  Effect.catchTags({
+    Forbidden: () => HttpServerResponse.empty({ status: 403 }),
+    NotFound: () => HttpServerResponse.empty({ status: 404 }),
+    PersistenceUnavailable: () => HttpServerResponse.empty({ status: 503 }),
+  }),
+);
+```
+
+`PersistenceUnavailable` becoming a 503 rather than a 500 is the payoff for resolvers and checks
+propagating a transient outage as a failure instead of dying on it.
+
+## Testing
+
+`hasPermissions` is an ordinary Effect. Provide the two registries and a caller:
+
+```ts
+const provideAuthz = (caller: Caller, checks: PolicyContribution) =>
+  Effect.provide(
+    Layer.mergeAll(
+      makePolicyRegistry([checks]),
+      makeResourceResolverRegistry({ todo: (id) => Effect.succeed(todoFixture) }),
+      Layer.succeed(CurrentUser, caller),
+    ),
+  );
+```
+
+That is how the package tests itself — a synthetic host with its own vocabulary, one scoped resource and
+one unscoped one.
+
+## Type reference
+
+| Export                                | What it is                            |
+| ------------------------------------- | ------------------------------------- |
+| `makeHasPermissions(adapter)`         | returns the `hasPermissions` function |
+| `AuthzAdapter<CallerContext, Denied>` | `{ caller, forbidden }`               |

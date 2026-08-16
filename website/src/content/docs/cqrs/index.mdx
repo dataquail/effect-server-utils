@@ -1,0 +1,102 @@
+---
+title: CQRS Overview
+description: The shape of @effect-server-utils/cqrs — messages, per-module dispatch surfaces, and the two application-wide buses.
+---
+
+`@effect-server-utils/cqrs` is a typed message bus for Effect, plus the pieces a bus is the natural
+place to put: transactional boundaries, event delivery, and cross-cutting middleware.
+
+## The three message kinds
+
+| Kind        | Handlers    | Answers with                    | Declared with                                         |
+| ----------- | ----------- | ------------------------------- | ----------------------------------------------------- |
+| **Command** | exactly one | its declared success or failure | [`Command.make`](/effect-server-utils/cqrs/commands/) |
+| **Query**   | exactly one | its declared success or failure | [`Query.make`](/effect-server-utils/cqrs/queries/)    |
+| **Event**   | any number  | nothing — it fans out           | [`Event.make`](/effect-server-utils/cqrs/events/)     |
+
+Commands and queries are separate facades over the same machinery. That split is not cosmetic: a
+message carries its side in its type, so a query group is rejected where a command group is expected.
+The CQRS distinction is enforced by the compiler rather than by convention.
+
+## The two layers
+
+There are two distinct things called "dispatching", and keeping them apart is most of what makes the
+package's types work.
+
+**A module's own dispatch surface.** A module groups the tags it owns, implements them, and publishes
+a dispatcher — one method per tag. A caller inside that module reaches its own commands without
+naming any application-wide bus:
+
+```ts
+const placeOrder = Effect.gen(function* () {
+  const orders = yield* Command.dispatcher(OrderCommands);
+  yield* orders.PlaceOrder({ orderId }); // typed from the definition
+});
+```
+
+**The application-wide bus.** At the composition root, every module's surface is folded into one
+routing table, and the bus routes by tag:
+
+```ts
+const bus = makeCommandBus(mergeDispatchTables(orders, billing, inventory), {
+  declaredIn: [OrderCommands, BillingCommands, InventoryCommands],
+});
+
+const anywhere = Effect.gen(function* () {
+  yield* bus.execute(PlaceOrder, { orderId }); // same types, from anywhere
+});
+```
+
+The table is **erased** — a tag to a function. It restates no message's signature, because `execute`
+reads the signature off the definition its caller passes and each module's registration already
+checked its handlers against the same definitions. `declaredIn` is what closes the remaining gap:
+see [Dispatch tables](/effect-server-utils/cqrs/dispatch-tables/).
+
+## How the pieces fit
+
+```
+   Command.make / Query.make          declare a message + its channels
+             │
+             ▼
+   Command.group                      a module's slice of the surface
+             │
+             ├──► Command.handlersOf  implement it (a Layer carrying the handlers' requirements)
+             │
+             └──► Command.dispatcher  one method per tag, + span/metrics middleware
+                        │
+                        ▼
+              mergeDispatchTables     fold every module's surface, at the composition root
+                        │
+                        ▼
+              makeCommandBus          the application-wide bus
+```
+
+Independently of that pipeline:
+
+- [`withUnitOfWork`](/effect-server-utils/cqrs/unit-of-work/) wraps a write-side use case in an
+  atomicity boundary built over a `TransactionDriver` you supply.
+- [`EventBus`](/effect-server-utils/cqrs/events/) carries events published inside that boundary, with
+  the consistency model picked per subscription.
+- [`Saga.runner`](/effect-server-utils/cqrs/sagas/) runs process managers over the after-commit stream.
+- [`UnhandledFailures`](/effect-server-utils/cqrs/unhandled-failures/) collects failures from the
+  isolated positions — after-commit handlers and sagas — that have no caller left to report to.
+
+## Design commitments
+
+**A handler's requirements are discharged where its module registers.** `Command.handlersOf` returns a
+`Layer` carrying whatever services its handlers need. By the time anything dispatches, the requirement
+channel is empty by construction — not stripped by a cast.
+
+**Handlers run in the dispatching fiber's context.** A command dispatched from inside a caller's
+transaction sees that transaction and joins it rather than opening a second one. A query resolved
+during a mutation reads through that mutation's uncommitted writes rather than a stale view. Both are
+pinned by tests, because the obvious hand-rolled alternative gets them wrong.
+
+**Middleware may not change a message's channels.** A caller's inferred type comes from the definition,
+so anything able to widen `E` at the seam would silently invalidate every `catchTag` written against
+it. Retry, timeout, logging, metrics, and spans all fit inside that constraint. Validation does not,
+which is why schema compatibility is asserted [in tests](/effect-server-utils/cqrs/testing/) instead.
+
+**Wiring mistakes are tagged defects, not messages.** `DuplicateDispatchTag`, `UnroutableTags`, and
+`MissingHandler` are conditions a boot check or a test wants to match on, so they arrive as values
+rather than as sentences inside a generic error.

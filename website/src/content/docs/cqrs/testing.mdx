@@ -1,0 +1,90 @@
+---
+title: Testing
+description: Checking that every declared contract can actually travel — and why the checker lives behind its own entry point.
+---
+
+```ts
+import { checkEventsSerializable, checkSerializable } from "@effect-server-utils/cqrs/testing";
+```
+
+## Why a separate entry point
+
+The checker derives sample values with a property-testing runtime, which is a **real runtime import**.
+Reached through the barrel it would ride into every consumer's production process for a check that only
+ever runs in a test — so it lives behind its own subpath, and nothing in the main import graph names it.
+
+## What it checks
+
+Declaring a message's channels as schemas rather than as bare types is a promise: the same definition
+describes an in-process dispatch today and a serialized one if the module is ever extracted.
+
+In-process dispatch passes values by reference and **never encodes anything**, so that promise is
+otherwise untested. A payload carrying a class instance, an `Option`, a `Map`, or a branded type with an
+opaque refinement works perfectly today and is silently unable to travel. This is what turns the claim
+into something that fails a build.
+
+```ts
+import { it } from "@effect/vitest";
+import { checkSerializable } from "@effect-server-utils/cqrs/testing";
+
+it.effect("every declared contract is portable", () =>
+  Effect.gen(function* () {
+    const problems = yield* checkSerializable(OrderCommands);
+    deepStrictEqual(problems, []);
+  }),
+);
+```
+
+An empty result means every channel of every message in the group survives a round-trip through JSON. A
+non-empty one names each problem:
+
+```ts
+interface Incompatibility {
+  readonly tag: string;
+  readonly channel: "payload" | "success" | "failure";
+  readonly reason: string;
+}
+```
+
+It is a **checker rather than an assertion** so a caller can present every problem at once, instead of
+stopping at the first. Run it over every group the host declares.
+
+Channels that carry nothing — a `Void` payload, a `Never` failure — are skipped rather than reported:
+their encoded form is absent rather than JSON, so asking them to round-trip would flag a problem that
+does not exist.
+
+The check is property-based rather than sample-based, because the interesting failures live in the
+fields a hand-written fixture omits: the nullable one, the nested union, the empty array.
+
+## Events
+
+Events have no group to be collected into, so they get their own entry point:
+
+```ts
+const check = Effect.gen(function* () {
+  const problems = yield* checkEventsSerializable([OrderPlaced, PaymentSettled, ShipmentFailed]);
+  deepStrictEqual(problems, []);
+});
+```
+
+Events are the messages most likely to be persisted or replayed later — an outbox row, a durable log —
+so an event that cannot be encoded is the most expensive kind to discover late.
+
+## Why this and not validation at dispatch
+
+A middleware that decoded payloads would introduce a failure the message definition never declared,
+widening the error channel every `catchTag` was written against. Codec compatibility is a property of
+the _declarations_, which do not change between requests — so asserting it once in a test is both
+cheaper and stricter than checking it on every dispatch. See
+[Middleware](/effect-server-utils/cqrs/middleware/).
+
+## Testing your own handlers
+
+Nothing about the package gets in the way of ordinary Effect testing:
+
+- **Use cases** depend on the `UnitOfWork` port, never on a datastore, so they run against a
+  pass-through `TransactionDriver` with no database in sight.
+- **Policy checks** and handlers are plain Effects — provide their services and run them.
+- **Wiring** is assertable because the failure modes are values: see
+  [Dispatch tables](/effect-server-utils/cqrs/dispatch-tables/) and
+  [Unhandled failures](/effect-server-utils/cqrs/unhandled-failures/).

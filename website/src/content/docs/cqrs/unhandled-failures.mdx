@@ -1,0 +1,87 @@
+---
+title: Unhandled failures
+description: Where a failure goes when no caller is left to receive it.
+---
+
+Eventual reactions are deliberately isolated: the producer has already committed, so a reaction's
+failure must not undo it. That isolation leaves the failure nowhere to surface — the dispatching fiber
+finished long ago.
+
+Without somewhere to report it, the only record is a log line, which nothing can alert on and no test
+can assert against. `UnhandledFailures` is that somewhere.
+
+## What gets reported
+
+```ts
+type UnhandledFailureKind = "after-commit-handler" | "saga";
+
+interface UnhandledFailure {
+  readonly source: string;
+  readonly kind: UnhandledFailureKind;
+  readonly eventTag: string | undefined;
+  readonly cause: Cause.Cause<unknown>;
+}
+```
+
+`source` is the name the failing work was registered under. After-commit handlers register as bare
+functions, so their position in the tag's registration order is the only name one has —
+`OrderPlaced#0`. A saga reports its `name`.
+
+`cause` is a full `Cause`, so a typed failure, a defect, and an interrupt are all covered. The type is
+named for **failures** rather than exceptions because that is what these are.
+
+## Wiring it
+
+```ts
+import { makeUnhandledFailures } from "@effect-server-utils/cqrs";
+
+const UnhandledFailuresLive = makeUnhandledFailures();
+```
+
+That is all. The reporting positions resolve it from **ambient context** rather than declaring it as a
+dependency, so adding it is purely additive: a host that wires none keeps exactly the behaviour it had,
+and the log stays the record either way.
+
+## Consuming it
+
+```ts
+const alertOnUnhandled = Effect.gen(function* () {
+  const failures = yield* UnhandledFailures;
+  const stream = yield* failures.stream;
+  yield* Stream.runForEach(stream, (failure) =>
+    pagerduty.notify({
+      summary: `${failure.kind} '${failure.source}' failed`,
+      cause: Cause.pretty(failure.cause),
+    }),
+  );
+});
+```
+
+Only failures reported while subscribed arrive — the log is the durable record, this is the
+programmatic one. The internal buffer is unbounded so that reporting a failure can never block the
+isolated position that is already failing.
+
+## Asserting it in tests
+
+The reason this is a service and not just a log line: a test can watch it.
+
+```ts
+it.effect("a failing after-commit handler is reported, not swallowed", () =>
+  Effect.gen(function* () {
+    const failures = yield* UnhandledFailures;
+    const stream = yield* failures.stream;
+    // ... run the operation whose after-commit handler fails
+    const reported = yield* Stream.runHead(stream);
+    // assert on reported.source / reported.kind / reported.cause
+  }),
+);
+```
+
+## Type reference
+
+| Export                                         | What it is                         |
+| ---------------------------------------------- | ---------------------------------- |
+| `UnhandledFailures` / `UnhandledFailuresShape` | the service, `{ report, stream }`  |
+| `makeUnhandledFailures()`                      | `Layer<UnhandledFailures>`         |
+| `UnhandledFailure`                             | what is reported                   |
+| `UnhandledFailureKind`                         | `'after-commit-handler' \| 'saga'` |

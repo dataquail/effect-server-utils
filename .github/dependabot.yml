@@ -1,0 +1,44 @@
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      effect:
+        patterns:
+          - "effect"
+          - "@effect/*"
+      nx:
+        patterns:
+          - "nx"
+          - "@nx/*"
+      testing:
+        patterns:
+          - "vitest"
+          - "@vitest/*"
+      lint:
+        patterns:
+          - "oxlint"
+          - "oxlint-*"
+          - "eslint-plugin-*"
+      babel:
+        patterns:
+          - "@babel/*"
+          - "babel-plugin-*"
+      types:
+        patterns:
+          - "@types/*"
+    ignore:
+      # Pinned to the exact beta the packages declare as a peer dependency; a
+      # bump is a coordinated release, not a dependency update.
+      - dependency-name: "effect"
+      - dependency-name: "@effect/vitest"
+    open-pull-requests-limit: 10
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
