@@ -8,7 +8,7 @@ overrides:
   effect: 4.0.0-beta.94
   '@effect/vitest': 4.0.0-beta.94
   '@effect/build-utils': 0.8.9
-  '@effect/language-service': 0.85.1
+  '@effect/language-service': 0.87.2
   vitest: ^3.2.7
   esbuild: ^0.25.0
   flatted: ^3.4.2
@@ -51,8 +51,8 @@ importers:
         specifier: 0.8.9
         version: 0.8.9
       '@effect/language-service':
-        specifier: 0.85.1
-        version: 0.85.1
+        specifier: 0.87.2
+        version: 0.87.2
       '@effect/tsgo':
         specifier: ^0.36.1
         version: 0.36.5
@@ -818,8 +818,8 @@ packages:
     engines: {node: '>=16.17.1'}
     hasBin: true
 
-  '@effect/language-service@0.85.1':
-    resolution: {integrity: sha512-EXnJjIy6zQ3nUO/MZ+ynWUb8B895KZPotd1++oTs9JjDkplwM7cb6zo8Zq2zU6piwq+KflO7amXbEfj1UMpHkw==}
+  '@effect/language-service@0.87.2':
+    resolution: {integrity: sha512-CfiSoaVQO8pZgaMZGw5VvMvRGybsJ2LaSDoLYaqiVGvo/YYPYVR2GzUKY0h1NtIweq/+SQ5XLrvtzPIttWQ0GQ==}
     hasBin: true
 
   '@effect/tsgo-darwin-arm64@0.36.5':
@@ -7022,7 +7022,7 @@ snapshots:
       micromatch: 4.0.8
       pkg-entry-points: 1.1.2
 
-  '@effect/language-service@0.85.1': {}
+  '@effect/language-service@0.87.2': {}
 
   '@effect/tsgo-darwin-arm64@0.36.5':
     optional: true
