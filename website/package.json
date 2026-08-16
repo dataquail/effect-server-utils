@@ -9,7 +9,7 @@
     "preview": "astro preview"
   },
   "dependencies": {
-    "astro": "^5.7.0",
+    "astro": "^7.2.1",
     "@astrojs/starlight": "^0.41.7"
   },
   "nx": {
