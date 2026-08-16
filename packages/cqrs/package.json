@@ -1,6 +1,6 @@
 {
   "name": "@effect-server-utils/cqrs",
-  "version": "0.1.0",
+  "version": "0.1.0-beta.0",
   "type": "module",
   "license": "MIT",
   "description": "Typed CQRS for Effect: command and query buses with per-message success and error types, an event bus whose subscriptions choose their consistency model, a unit-of-work port, and process managers",
