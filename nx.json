@@ -38,6 +38,9 @@
     "git": {
       "commitMessage": "chore: updated version [no ci]"
     },
+    "releaseTag": {
+      "strictPreid": false
+    },
     "version": {
       "conventionalCommits": true,
       "updateDependents": "auto",
