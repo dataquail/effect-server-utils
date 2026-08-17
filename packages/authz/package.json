@@ -1,6 +1,6 @@
 {
   "name": "@effect-server-utils/authz",
-  "version": "0.1.0-beta.1",
+  "version": "0.1.0-beta.2",
   "type": "module",
   "license": "MIT",
   "description": "Declarative per-route authorization for Effect: policy checks registered against (resource, action) pairs, per-request resource resolution, and composable check combinators",
