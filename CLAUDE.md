@@ -54,6 +54,13 @@ removed from both `package.json` files so nothing regenerates them.
 **`effect.generateExports` must exclude `*.test.ts`.** Tests are co-located in `src/`, so without the
 exclusion every test file becomes a published subpath export.
 
+**`dist/` is post-processed by `scripts/prune-dist.mjs`** (each package's `build-prune` step, the last
+thing `build` runs). It deletes the co-located `*.test.ts` that `pack-v2` copies into `dist/src/`, and
+the one-`package.json` subpath proxy directory `pack-v2` writes per entrypoint — 20 unreachable
+directories across the two packages, since `exports` is authoritative for every resolver a consumer of
+an exports-only `effect@4` can be on. `typesVersions` deliberately stays; the script's header comment
+has the full reasoning. `pack-v2` has no flag for either, hence the post-pass rather than a pnpm patch.
+
 **`effect` is an exact peer dependency** (`4.0.0-beta.94`) in both packages, pinned again in the root
 `pnpm.overrides`. Effect 4 betas are mutually incompatible; bumping it is a coordinated breaking change
 to both packages.

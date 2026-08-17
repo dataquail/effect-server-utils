@@ -12,7 +12,8 @@
       "{workspaceRoot}/.github/workflows/ci.yml",
       "{workspaceRoot}/.nvmrc",
       "{workspaceRoot}/tsconfig.base.json",
-      "{workspaceRoot}/.oxlintrc.json"
+      "{workspaceRoot}/.oxlintrc.json",
+      "{workspaceRoot}/scripts/prune-dist.mjs"
     ]
   },
   "targetDefaults": {

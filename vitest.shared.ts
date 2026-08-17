@@ -4,7 +4,9 @@ import { type ViteUserConfig } from "vitest/config";
 // A package's own tests import it by its published name (`@effect-server-utils/cqrs`),
 // not by a relative path — the same specifier a consumer writes. `TEST_DIST=1` points
 // that specifier at the built output instead of `src`, so the suite can be re-run
-// against what `build-utils prepare-v2` actually packaged.
+// against what `build-utils pack-v2` actually packaged. Note that `nx run-many -t test`
+// does not key its cache on `TEST_DIST`, so going through Nx will replay the `src` run —
+// invoke vitest directly in the package to actually exercise `dist`.
 const alias = (name: string) => {
   const target = process.env.TEST_DIST !== undefined ? "dist/dist/esm" : "src";
   const scopedName = `@effect-server-utils/${name}`;

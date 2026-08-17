@@ -31,7 +31,7 @@
     "check": "tsc -b tsconfig.json",
     "test": "vitest run",
     "coverage": "vitest run --coverage",
-    "build-prune": "find dist/src -name '*.test.ts' -delete"
+    "build-prune": "node ../../scripts/prune-dist.mjs"
   },
   "peerDependencies": {
     "effect": "4.0.0-beta.94"
