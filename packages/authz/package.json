@@ -19,7 +19,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/dataquail/effect-server-utils.git",
+    "url": "git+https://github.com/dataquail/effect-server-utils.git",
     "directory": "packages/authz"
   },
   "homepage": "https://dataquail.github.io/effect-server-utils",
