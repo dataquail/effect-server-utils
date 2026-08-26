@@ -1,6 +1,6 @@
 {
   "name": "@effect-server-utils/unit-of-work",
-  "version": "0.1.0-beta.2",
+  "version": "0.1.0-beta.3",
   "type": "module",
   "license": "MIT",
   "description": "The unit-of-work boundary for Effect: a re-entrant atomicity port over a host's transaction primitive, and the after-commit delivery it gives @effect-server-utils/cqrs's event bus",
