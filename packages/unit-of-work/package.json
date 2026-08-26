@@ -20,7 +20,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/dataquail/effect-server-utils.git",
+    "url": "git+https://github.com/dataquail/effect-server-utils.git",
     "directory": "packages/unit-of-work"
   },
   "homepage": "https://dataquail.github.io/effect-server-utils",
