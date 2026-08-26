@@ -44,6 +44,7 @@
     },
     "version": {
       "conventionalCommits": true,
+      "fallbackCurrentVersionResolver": "disk",
       "updateDependents": "auto",
       "preserveLocalDependencyProtocols": true,
       "manifestRootsToUpdate": ["{projectRoot}"]
