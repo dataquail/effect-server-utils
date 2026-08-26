@@ -82,8 +82,10 @@ cheaper and stricter than checking it on every dispatch. See
 
 Nothing about the package gets in the way of ordinary Effect testing:
 
-- **Use cases** depend on the `UnitOfWork` port, never on a datastore, so they run against a
-  pass-through `TransactionDriver` with no database in sight.
+- **Use cases** depend on the `UnitOfWork` port, never on a datastore, so they run against
+  `PassThroughUnitOfWork` from
+  [`@effect-server-utils/unit-of-work/testing`](/effect-server-utils/unit-of-work/) with no database in
+  sight.
 - **Policy checks** and handlers are plain Effects — provide their services and run them.
 - **Wiring** is assertable because the failure modes are values: see
   [Dispatch tables](/effect-server-utils/cqrs/dispatch-tables/) and

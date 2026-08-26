@@ -11,21 +11,20 @@ import * as Stream from "effect/Stream";
 
 import * as Event from "./event.js";
 import { EventBus, makeEventBus } from "./event-bus.js";
-import { RecordingTransactionDriver } from "./internal/transaction-driver-fake.js";
 import * as Saga from "./saga.js";
 import {
   makeUnhandledFailures,
   type UnhandledFailure,
   UnhandledFailures,
 } from "./unhandled-failures.js";
-import { makeUnitOfWork, UnitOfWork } from "./unit-of-work.js";
 
 const Reacted = Event.make("ReactedEvent", { value: Schema.String });
 
-/** A unit of work and eventual bus over the in-memory driver. */
-const cqrsRuntime = Layer.mergeAll(makeUnitOfWork(), makeEventBus()).pipe(
-  Layer.provide(RecordingTransactionDriver),
-);
+// No deferral sink, so a dispatch drains its own deferred surfaces. The
+// positions that isolate a failure are the bus's and the saga runner's, not the
+// boundary's, so what gets reported is the same either way — and asserting it
+// here keeps this suite from depending on a unit of work to reach them.
+const cqrsRuntime = makeEventBus();
 
 /** Collects everything reported while `body` runs. */
 const collectingFailures = <A, E, R>(body: Effect.Effect<A, E, R>) =>
@@ -53,10 +52,9 @@ describe("UnhandledFailures", () => {
 
       const reported = yield* collectingFailures(
         Effect.gen(function* () {
-          const uow = yield* UnitOfWork;
           const bus = yield* EventBus;
           yield* bus.subscribeAfterCommit(Reacted, () => Effect.die("handler exploded"));
-          yield* uow.run(bus.dispatch([Reacted.make({ value: "a" })]));
+          yield* bus.dispatch([Reacted.make({ value: "a" })]);
         }),
       ).pipe(Effect.provide(Layer.mergeAll(runtime, makeUnhandledFailures())));
 
@@ -82,9 +80,8 @@ describe("UnhandledFailures", () => {
 
       const reported = yield* collectingFailures(
         Effect.gen(function* () {
-          const uow = yield* UnitOfWork;
           const bus = yield* EventBus;
-          yield* uow.run(bus.dispatch([Reacted.make({ value: "a" })]));
+          yield* bus.dispatch([Reacted.make({ value: "a" })]);
           // Yield inside the runner's scope: closing it interrupts the saga fiber,
           // so the saga has to get its turn before this effect returns.
           yield* Effect.yieldNow;
@@ -129,7 +126,6 @@ describe("UnhandledFailures", () => {
 
       const handled = yield* Ref.make<ReadonlyArray<string>>([]);
       yield* Effect.gen(function* () {
-        const uow = yield* UnitOfWork;
         const bus = yield* EventBus;
         yield* bus.subscribeAfterCommit(Reacted, () => Effect.die("handler exploded"));
         yield* bus.subscribeAfterCommit(Reacted, (event) =>
@@ -137,7 +133,7 @@ describe("UnhandledFailures", () => {
         );
 
         // Succeeds despite the failing handler, and the later one still runs.
-        yield* uow.run(bus.dispatch([Reacted.make({ value: "a" })]));
+        yield* bus.dispatch([Reacted.make({ value: "a" })]);
       }).pipe(Effect.provide(runtime));
 
       deepStrictEqual(yield* Ref.get(handled), ["a"]);

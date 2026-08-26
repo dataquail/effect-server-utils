@@ -38,11 +38,21 @@
         "name": "@effect/language-service"
       }
     ],
+    // Targets are `.ts`, not the `.js` a consumer would import. A `.js` target
+    // only resolves when the file is already in the compiling program, which is
+    // true within a package and false across one: `@effect-server-utils/unit-of-work`
+    // importing cqrs would find `packages/cqrs/src/index.js`, a file that does
+    // not exist, and fall back to `any`. Naming the `.ts` lets TypeScript find
+    // it, and the project reference in the importing package's tsconfig is what
+    // then redirects it to that project's declaration output. These are
+    // build-time only — nothing here is ever emitted into a specifier.
     "paths": {
-      "@effect-server-utils/authz": ["./packages/authz/src/index.js"],
-      "@effect-server-utils/authz/*": ["./packages/authz/src/*.js"],
-      "@effect-server-utils/cqrs": ["./packages/cqrs/src/index.js"],
-      "@effect-server-utils/cqrs/*": ["./packages/cqrs/src/*.js"]
+      "@effect-server-utils/authz": ["./packages/authz/src/index.ts"],
+      "@effect-server-utils/authz/*": ["./packages/authz/src/*.ts"],
+      "@effect-server-utils/cqrs": ["./packages/cqrs/src/index.ts"],
+      "@effect-server-utils/cqrs/*": ["./packages/cqrs/src/*.ts"],
+      "@effect-server-utils/unit-of-work": ["./packages/unit-of-work/src/index.ts"],
+      "@effect-server-utils/unit-of-work/*": ["./packages/unit-of-work/src/*.ts"]
     }
   }
 }

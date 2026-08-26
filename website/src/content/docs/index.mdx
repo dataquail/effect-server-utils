@@ -21,7 +21,8 @@ import { Card, CardGrid } from "@astrojs/starlight/components";
   <Card title="@effect-server-utils/cqrs" icon="random">
     Command and query buses whose success and error channels come from the message
     definition, an event bus where the **subscription** picks the consistency model,
-    a unit-of-work port over your own transaction primitive, and process managers.
+    and process managers. A unit-of-work boundary over your own transaction primitive ships
+    separately, so the buses stay free of any opinion about transactions.
 
     [Read the overview →](/effect-server-utils/cqrs/)
 

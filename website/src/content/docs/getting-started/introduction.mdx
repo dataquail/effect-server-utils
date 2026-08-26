@@ -28,7 +28,7 @@ The signature is read off the `PlaceOrder` definition the caller passes, so ther
 a declaration could drift from, and no cast at any call site.
 
 Around that it adds the things a bus is the natural place for: [an event bus whose _subscriptions_
-choose their consistency model](/effect-server-utils/cqrs/events/), [a unit-of-work boundary](/effect-server-utils/cqrs/unit-of-work/)
+choose their consistency model](/effect-server-utils/cqrs/events/), [a unit-of-work boundary](/effect-server-utils/unit-of-work/)
 over a transaction primitive you supply, [process managers](/effect-server-utils/cqrs/sagas/), and
 [middleware](/effect-server-utils/cqrs/middleware/) that cannot widen a message's error channel.
 
@@ -56,8 +56,9 @@ Whether your model is CRUD or a set of domain verbs stays your decision.
 
 - **Effect 4** (currently `4.0.0-beta.94`, declared as an exact peer dependency).
 - **ESM or CJS** — both are published, with type declarations for each.
-- **Nothing about your datastore.** The CQRS package's unit of work is written against a
-  `TransactionDriver` interface with three members; the SQL is yours.
+- **Nothing about your datastore.** The CQRS package does not know what a transaction is at all. The
+  unit of work is a separate package, written against a `TransactionDriver` interface with three
+  members; the SQL is yours, and installing it is optional.
 
 ## What they are not
 

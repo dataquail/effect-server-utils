@@ -1,6 +1,7 @@
 import { deepStrictEqual } from "node:assert";
 
 import { describe, it } from "@effect/vitest";
+import { Event, EventBus, makeEventBus, Saga } from "@effect-server-utils/cqrs";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
@@ -8,16 +9,22 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
-import * as Logger from "effect/Logger";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 
-import * as Event from "./event.js";
-import { EventBus, makeEventBus } from "./event-bus.js";
-import { driverFailingWith, makeRecordingDriver } from "./internal/transaction-driver-fake.js";
+import { UnitOfWorkScope } from "./internal/unit-of-work-scope.js";
 import { PersistenceUnavailable } from "./persistence-unavailable.js";
+import { driverFailingWith, makeRecordingDriver } from "./testing.js";
 import { TransactionDriver, TransactionFailed } from "./transaction-driver.js";
-import { makeUnitOfWork, UnitOfWork, withUnitOfWork } from "./unit-of-work.js";
+import {
+  EventDispatchedOutsideUnitOfWork,
+  makeUnitOfWork,
+  UnitOfWork,
+  withUnitOfWork,
+} from "./unit-of-work.js";
 
 class Probe extends Context.Service<Probe, { readonly value: string }>()("test/Probe") {}
 
@@ -311,38 +318,95 @@ describe("UnitOfWork post-commit flush", () => {
     }),
   );
 
-  // Dropping an event whose producer committed is the one outcome that must not
-  // pass unrecorded, so the two branches that can reach it say so.
-  it.effect("reports buffered events it has nothing to deliver them with", () =>
+  // The case that used to lose events. The bus is visible to the publisher but
+  // not to the fiber that commits — the shape a host produces by wiring one
+  // deeper than its unit-of-work boundary. The sink resolves the bus when it
+  // takes the events, so the drain it buffered holds the right one and there is
+  // nothing left to look up at commit time.
+  it.effect("delivers through a bus wired deeper than the boundary", () =>
     Effect.gen(function* () {
-      const logged: Array<string> = [];
       const { driver } = yield* makeRecordingDriver;
+      const handled = yield* Ref.make<ReadonlyArray<string>>([]);
       const uow = yield* Effect.provide(
         UnitOfWork,
         makeUnitOfWork().pipe(Layer.provide(Layer.succeed(TransactionDriver, driver))),
       );
 
-      // The bus is visible to the publisher but not to the flush, which is the
-      // shape a host produces by wiring one deeper than its unit-of-work boundary.
-      yield* uow
-        .run(
-          Effect.gen(function* () {
-            const bus = yield* EventBus;
-            yield* bus.dispatch([Buffered.make({ value: "a" })]);
-          }).pipe(Effect.provide(makeEventBus())),
-        )
-        .pipe(
-          Effect.provide(
-            Logger.layer([
-              Logger.make<unknown, void>(({ message }) => {
-                logged.push(String(message));
-              }),
-            ]),
-          ),
-        );
+      yield* uow.run(
+        Effect.gen(function* () {
+          const bus = yield* EventBus;
+          yield* bus.subscribeAfterCommit(Buffered, (event) =>
+            Ref.update(handled, (prev) => [...prev, event.value]),
+          );
+          yield* bus.dispatch([Buffered.make({ value: "a" })]);
+        }).pipe(Effect.provide(makeEventBus())),
+      );
 
-      deepStrictEqual(logged.length, 1);
-      deepStrictEqual(logged[0]?.includes("BufferedEvent"), true);
+      deepStrictEqual(yield* Ref.get(handled), ["a"]);
+    }),
+  );
+
+  // A dispatch that forgot its boundary would buffer onto nothing and vanish
+  // silently, which is worse than failing. Tagged so a test can name it.
+  it.effect("dispatching outside a unit of work is a tagged defect", () =>
+    Effect.gen(function* () {
+      const { bus, provide } = yield* stagedUnitOfWork;
+
+      const exit = yield* Effect.exit(provide(bus.dispatch([Buffered.make({ value: "a" })])));
+
+      deepStrictEqual(Exit.isFailure(exit), true);
+      if (Exit.isFailure(exit)) {
+        const defect = Result.getSuccess(Cause.findDefect(exit.cause));
+        deepStrictEqual(
+          Option.map(defect, (found) => found instanceof EventDispatchedOutsideUnitOfWork),
+          Option.some(true),
+        );
+      }
+    }),
+  );
+});
+
+describe("UnitOfWork scope isolation", () => {
+  // The load-bearing safety property on this side of the seam. A saga runs from
+  // its runner's layer scope, so it must never find the scope of whatever
+  // published the event it is reading — if it did, it would issue queries on a
+  // connection that is about to commit and be released.
+  it.effect("a saga never sees the publishing unit of work's scope", () =>
+    Effect.gen(function* () {
+      const { driver } = yield* makeRecordingDriver;
+      const sawScope = yield* Ref.make<ReadonlyArray<boolean>>([]);
+
+      const observer = Saga.make({
+        name: "ScopeObserver",
+        events: [Buffered],
+        run: (events) =>
+          Stream.runForEach(events, () =>
+            Effect.flatMap(Effect.serviceOption(UnitOfWorkScope), (scope) =>
+              Ref.update(sawScope, (prev) => [...prev, Option.isSome(scope)]),
+            ),
+          ),
+      });
+
+      yield* Effect.gen(function* () {
+        const uow = yield* UnitOfWork;
+        const bus = yield* EventBus;
+        yield* uow.run(bus.dispatch([Buffered.make({ value: "a" })]));
+        // Yield inside the runner's scope: closing it interrupts the saga fiber,
+        // so the saga has to get its turn before this effect returns.
+        yield* Effect.yieldNow;
+      }).pipe(
+        Effect.provide(
+          Saga.runner(observer).pipe(
+            Layer.provideMerge(
+              Layer.mergeAll(makeUnitOfWork(), makeEventBus()).pipe(
+                Layer.provide(Layer.succeed(TransactionDriver, driver)),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      deepStrictEqual(yield* Ref.get(sawScope), [false]);
     }),
   );
 });

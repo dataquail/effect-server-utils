@@ -15,7 +15,7 @@
 //
 // 2. The subpath proxy directories. pack-v2 unconditionally writes a
 //    `dist/<entrypoint>/package.json` carrying `main`/`module`/`types` for
-//    every subpath export, one directory per module: 15 for cqrs, 5 for authz.
+//    every subpath export, one directory per module.
 //    That is the pre-`exports` resolution mechanism, where `pkg/command`
 //    resolved by finding a real `command/` directory with its own manifest.
 //    Nothing these packages can be consumed from still takes that path — Node

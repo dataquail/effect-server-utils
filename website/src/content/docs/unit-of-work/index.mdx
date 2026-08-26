@@ -3,10 +3,20 @@ title: Unit of work
 description: The atomicity boundary a write-side use case declares once — built over a transaction primitive you supply.
 ---
 
+```sh
+pnpm add @effect-server-utils/unit-of-work @effect-server-utils/cqrs effect
+```
+
+Its own package, because [`@effect-server-utils/cqrs`](/effect-server-utils/cqrs/) has no opinion about
+transactions. The CQRS event bus knows that some subscriptions want to run _after_ whatever produced the
+event has finished; it does not know what "finished" means. This package answers that — and if you never
+install it, the bus still works, running those handlers at the end of each dispatch instead. See
+[Events](/effect-server-utils/cqrs/events/) for what changes and what does not.
+
 `withUnitOfWork` is the combinator a write-side use case applies at the end of its pipe:
 
 ```ts
-import { withUnitOfWork } from "@effect-server-utils/cqrs";
+import { withUnitOfWork } from "@effect-server-utils/unit-of-work";
 
 export const placeOrder = (input: PlaceOrderInput) =>
   Effect.gen(function* () {
@@ -30,7 +40,7 @@ database in sight.
 ## What you supply: `TransactionDriver`
 
 This is the whole of what the unit of work needs from a datastore. Everything else — nesting,
-post-commit buffering, flush ordering, failure isolation — lives in this package.
+post-commit buffering, drain ordering, failure isolation — lives in this package.
 
 ```ts
 interface TransactionDriverShape {
@@ -54,7 +64,12 @@ a repository inside picks it up. Nothing about that handle appears in this inter
 consumer's read path would have to name it.
 
 ```ts
-const UnitOfWorkLive = makeUnitOfWork().pipe(Layer.provide(PostgresTransactionDriver));
+// `makeUnitOfWork` produces two services: the boundary, and the `DeferralSink`
+// the CQRS event bus looks for. They ship together because they are one
+// decision — "after commit" has no meaning until something owns a commit.
+const runtime = Layer.mergeAll(makeEventBus(), makeUnitOfWork()).pipe(
+  Layer.provide(PostgresTransactionDriver),
+);
 ```
 
 ## Re-entrancy
@@ -74,7 +89,9 @@ events from work that was undone never fire.
 
 1. The effect runs inside the driver's scope. Immediate event subscribers run here, in the publisher's
    fiber.
-2. Buffered after-commit events accumulate on the `UnitOfWorkScope` as they are dispatched.
+2. As events are dispatched, the `DeferralSink` this layer installed takes them and buffers a drain for
+   each — resolving the event bus at that moment, in the fiber that dispatched, so a bus wired deeper
+   than the boundary is still the one that gets drained.
 3. The scope commits. **A failed scope never reaches step 4** — that sequencing is the whole commit
    guarantee.
 4. The buffer is drained: stream consumers are broadcast to first and not awaited, then each
@@ -83,11 +100,14 @@ events from work that was undone never fire.
 
 Step 4 is **uninterruptible**. The transaction has committed, so an interrupt arriving then — a caller
 hanging up, a shutdown — would otherwise discard every reaction to work that is already durable. The
-caller was already waiting for the flush, so the only thing given up is the ability to cancel reactions
+caller was already waiting for the drain, so the only thing given up is the ability to cancel reactions
 that must happen anyway.
 
-Stream consumers go first, and unawaited, because a process manager may run for days; holding the flush
+Stream consumers go first, and unawaited, because a process manager may run for days; holding the drain
 for one would stall every later reaction.
+
+Dispatching with no unit of work open is a tagged defect, `EventDispatchedOutsideUnitOfWork`, rather
+than a quietly different delivery: once a boundary is installed, a dispatch that forgot one is a bug.
 
 ## Error channels
 
@@ -111,23 +131,29 @@ to service the request. It propagates as a failure, because retrying is a real o
 boundary can turn it into a 503. It lives in this package rather than in a database package so a
 module's `domain/` can name it in a repository port without importing infrastructure.
 
-## `UnitOfWorkScope`
+## Testing
 
-Present exactly while a unit of work is open, and the carrier for the after-commit buffer. Its presence
-is the answer to "am I inside a unit of work?" — which is what the event bus fails fast on.
+```ts
+import { PassThroughUnitOfWork } from "@effect-server-utils/unit-of-work/testing";
+```
 
-You rarely name it directly. It is a separate module from the unit of work because the unit of work
-reads the event bus to flush it and that bus reads this scope; routing both through a carrier is what
-keeps the dependency acyclic.
+The real boundary over an in-memory driver: real re-entrancy, real after-commit ordering, real
+discard-on-rollback, no datastore. What a unit test of a use case wires when its repositories are fakes
+that never consult a transaction. Prefer it to a hand-rolled pass-through, which tends to get the
+rollback case wrong.
+
+`makeRecordingDriver`, `RecordingTransactionDriver` and `driverFailingWith` are there too, for tests
+that assert which scope was opened or that drive the failure paths.
 
 ## Type reference
 
-| Export                                         | What it is                                       |
-| ---------------------------------------------- | ------------------------------------------------ |
-| `withUnitOfWork(effect)`                       | the boundary combinator a use case applies       |
-| `UnitOfWork` / `UnitOfWorkShape`               | the port, `{ run }`                              |
-| `makeUnitOfWork()`                             | `Layer<UnitOfWork, never, TransactionDriver>`    |
-| `TransactionDriver` / `TransactionDriverShape` | what you supply                                  |
-| `TransactionFailed`                            | the boundary itself failed — demoted to a defect |
-| `PersistenceUnavailable`                       | transient store outage — propagates              |
-| `UnitOfWorkScope`                              | present while a unit of work is open             |
+| Export                                         | What it is                                                    |
+| ---------------------------------------------- | ------------------------------------------------------------- |
+| `withUnitOfWork(effect)`                       | the boundary combinator a use case applies                    |
+| `UnitOfWork` / `UnitOfWorkShape`               | the port, `{ run }`                                           |
+| `makeUnitOfWork()`                             | `Layer<UnitOfWork \| DeferralSink, never, TransactionDriver>` |
+| `TransactionDriver` / `TransactionDriverShape` | what you supply                                               |
+| `TransactionFailed`                            | the boundary itself failed — demoted to a defect              |
+| `PersistenceUnavailable`                       | transient store outage — propagates                           |
+| `EventDispatchedOutsideUnitOfWork`             | dispatched with no boundary open — a tagged defect            |
+| `PassThroughUnitOfWork`                        | the real boundary, in-memory (`/testing`)                     |

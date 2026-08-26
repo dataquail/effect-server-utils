@@ -7,7 +7,10 @@ import { Tabs, TabItem } from "@astrojs/starlight/components";
 
 ## Install
 
-The two packages are independent — install either or both.
+`@effect-server-utils/cqrs` and `@effect-server-utils/authz` are independent — install either or both.
+`@effect-server-utils/unit-of-work` is optional and sits on top of the CQRS package: it supplies the
+atomicity boundary a write-side use case declares, and gives `subscribeAfterCommit` a real commit to
+wait for. Without it the event bus still works, running those handlers at the end of each dispatch.
 
 <Tabs syncKey="pkg">
   <TabItem label="pnpm">
@@ -15,6 +18,9 @@ The two packages are independent — install either or both.
 ```sh
 pnpm add @effect-server-utils/cqrs effect
 pnpm add @effect-server-utils/authz effect
+
+# optional, on top of cqrs
+pnpm add @effect-server-utils/unit-of-work @effect-server-utils/cqrs effect
 ```
 
   </TabItem>
@@ -23,6 +29,9 @@ pnpm add @effect-server-utils/authz effect
 ```sh
 npm install @effect-server-utils/cqrs effect
 npm install @effect-server-utils/authz effect
+
+# optional, on top of cqrs
+npm install @effect-server-utils/unit-of-work @effect-server-utils/cqrs effect
 ```
 
   </TabItem>
@@ -31,6 +40,9 @@ npm install @effect-server-utils/authz effect
 ```sh
 yarn add @effect-server-utils/cqrs effect
 yarn add @effect-server-utils/authz effect
+
+# optional, on top of cqrs
+yarn add @effect-server-utils/unit-of-work @effect-server-utils/cqrs effect
 ```
 
   </TabItem>
@@ -48,11 +60,14 @@ yarn add @effect-server-utils/authz effect
 
 Effect 4 is still in beta and its pre-release versions are not compatible with one another. Pinning
 exactly is what keeps a mismatched `effect` in your lockfile from surfacing as a type error deep
-inside a schema signature. When you move to a newer beta, expect to move both packages with it.
+inside a schema signature. When you move to a newer beta, expect to move every package with it.
+
+`@effect-server-utils/unit-of-work` pins `@effect-server-utils/cqrs` the same way, and for the same
+reason: the two are coupled through the `DeferralSink` contract, so they are released together.
 
 ## TypeScript
 
-Both packages ship ESM and CJS builds with declarations for each, and use conditional `exports`. That
+Every package ships ESM and CJS builds with declarations for each, and uses conditional `exports`. That
 means `moduleResolution` has to be one that reads `exports` — `"NodeNext"`, `"Node16"`, or
 `"Bundler"`. The classic `"Node"` resolution will not find the types.
 
@@ -69,7 +84,7 @@ means `moduleResolution` has to be one that reads `exports` — `"NodeNext"`, `"
 }
 ```
 
-`strict` is not optional in practice: both packages lean on discriminated unions and conditional types
+`strict` is not optional in practice: these packages lean on discriminated unions and conditional types
 whose whole purpose is to make a wrong wiring fail to compile, and most of that evaporates without it.
 
 ## Subpath imports
@@ -83,17 +98,21 @@ import { Command } from "@effect-server-utils/cqrs";
 import * as Command from "@effect-server-utils/cqrs/command";
 ```
 
-One subpath is deliberately **not** in the barrel:
+Two subpaths are deliberately **not** in their barrel:
 
 ```ts
 import { checkSerializable } from "@effect-server-utils/cqrs/testing";
+import { PassThroughUnitOfWork } from "@effect-server-utils/unit-of-work/testing";
 ```
 
-The testing helpers derive sample values with a property-testing runtime. Reached through the barrel
-it would ride into every consumer's production bundle for a check that only ever runs in a test, so it
-lives behind its own entry point. See [Testing](/effect-server-utils/cqrs/testing/).
+The CQRS helpers derive sample values with a property-testing runtime; the unit-of-work ones are
+in-memory stand-ins for a datastore. Reached through a barrel either would ride into a consumer's
+production bundle for something that only ever runs in a test, so each lives behind its own entry
+point. See [Testing](/effect-server-utils/cqrs/testing/).
 
 ## Next steps
 
 - [CQRS overview](/effect-server-utils/cqrs/) — messages, buses, and how an application is composed.
+- [Unit of work](/effect-server-utils/unit-of-work/) — the atomicity boundary, and what it adds to the
+  event bus.
 - [AuthZ overview](/effect-server-utils/authz/) — the config seam and the one call at the boundary.

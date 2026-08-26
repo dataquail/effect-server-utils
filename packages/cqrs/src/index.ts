@@ -54,32 +54,18 @@ export {
 } from "./dispatch-table.js";
 export { makeQueryBus, QueryBus, type QueryBusShape } from "./query-bus.js";
 
-// The atomicity boundary a write-side use case declares once, at the end of its pipe.
-// A host supplies `TransactionDriver`; everything about how the boundary behaves —
-// re-entrancy, and the event semantics layered on it — belongs to this package.
-export { PersistenceUnavailable } from "./persistence-unavailable.js";
-export {
-  TransactionDriver,
-  type TransactionDriverShape,
-  TransactionFailed,
-} from "./transaction-driver.js";
-export {
-  makeUnitOfWork,
-  UnitOfWork,
-  type UnitOfWorkShape,
-  withUnitOfWork,
-} from "./unit-of-work.js";
-export { UnitOfWorkScope } from "./unit-of-work-scope.js";
+// Where a dispatch's deferred surfaces go when something else owns the boundary
+// they are waiting on. Optional, and deliberately ignorant of what a boundary is
+// — a sink is told "these happened" and promises to call `EventBus.drain` for
+// them later. `@effect-server-utils/unit-of-work` installs the one that makes
+// after-commit mean after commit; with no sink in context the bus runs those
+// surfaces itself, at the end of each dispatch.
+export { DeferralSink, type DeferralSinkShape, type ReactionBoundary } from "./deferral.js";
 
 // One bus; the *subscription* is the switch between consistency models, not the
 // dispatch. `subscribe` runs in the publisher's fiber and can roll it back;
-// `subscribeAfterCommit` runs once it has committed, in its own unit of work, and
-// never can; `stream` feeds a saga and is never awaited. A producer says only that
-// something happened, so one event can serve consumers that need different things.
-export {
-  EventBus,
-  type EventBusShape,
-  EventDispatchedOutsideUnitOfWork,
-  type EventHandler,
-  makeEventBus,
-} from "./event-bus.js";
+// `subscribeAfterCommit` runs once the publisher's boundary has completed, in a
+// boundary of its own, and never can; `stream` feeds a saga and is never awaited.
+// A producer says only that something happened, so one event can serve consumers
+// that need different things.
+export { EventBus, type EventBusShape, type EventHandler, makeEventBus } from "./event-bus.js";

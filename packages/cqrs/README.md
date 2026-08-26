@@ -1,8 +1,7 @@
 # @effect-server-utils/cqrs
 
 Typed CQRS for [Effect](https://effect.website): command and query buses with per-message success and
-error types, an event bus whose subscriptions choose their consistency model, a unit-of-work port, and
-process managers.
+error types, an event bus whose subscriptions choose their consistency model, and process managers.
 
 ```sh
 pnpm add @effect-server-utils/cqrs effect
@@ -25,12 +24,15 @@ pnpm add @effect-server-utils/cqrs effect
   as tagged defects, so a boot check can match the condition instead of parsing a message string.
 - **`EventBus`** — one bus, three delivery contracts, chosen at _subscription_ rather than at dispatch.
   `subscribe` runs in the publisher's fiber and can roll it back; `subscribeAfterCommit` runs once the
-  publisher has committed, in its own unit of work, and never can; `stream` feeds a saga and is never
-  awaited. A producer says only that something happened, so one event can serve consumers that need
-  different things.
-- **`UnitOfWork`** — the atomicity boundary a write-side use case declares once, at the end of its pipe.
-  You supply a `TransactionDriver`; re-entrancy, post-commit buffering and flush ordering belong here.
-- **`Saga`** — a process manager over after-commit events, for when no single event decides.
+  publisher's boundary has completed, in a boundary of its own, and never can; `stream` feeds a saga
+  and is never awaited. A producer says only that something happened, so one event can serve consumers
+  that need different things.
+- **`DeferralSink`** — the optional seam that decides what `subscribeAfterCommit` waits for. This
+  package does not know what a transaction is: install
+  [`@effect-server-utils/unit-of-work`](https://www.npmjs.com/package/@effect-server-utils/unit-of-work)
+  and after-commit means after commit; install nothing and those handlers run at the end of each
+  dispatch. Handlers are written the same way either way.
+- **`Saga`** — a process manager over deferred events, for when no single event decides.
 - **`Middleware`** — behaviour applied once around every dispatch. `Middleware.span` is installed by
   default; `metrics()` and `deadline()` are opt-in. A middleware may not change a message's success or
   error channels, which is what lets the bus have a seam without weakening a caller's types.
@@ -79,10 +81,10 @@ const table = mergeDispatchTables(ordersDispatcher, billingDispatcher);
 const bus = makeCommandBus(table, { declaredIn: [Orders, Billing] });
 ```
 
-## Events and the unit of work
+## Events
 
 ```ts
-import { Event, withUnitOfWork } from "@effect-server-utils/cqrs";
+import { Event } from "@effect-server-utils/cqrs";
 
 const OrderPlaced = Event.make("OrderPlaced", { orderId: Schema.String });
 
@@ -95,6 +97,21 @@ const subscriptions = Effect.gen(function* () {
   // A reaction to work that is already durable: isolated, retried on its own.
   yield* bus.subscribeAfterCommit(OrderPlaced, (event) => email.sendReceipt(event.orderId));
 });
+```
+
+"Already durable" needs something to be durable _in_. With no `DeferralSink` in context the bus runs
+after-commit handlers at the end of the dispatch — still after every immediate one, still isolated —
+which is enough for a host with no datastore to coordinate. Add
+`@effect-server-utils/unit-of-work` and the same handlers start running after a real commit, each in
+a transaction of its own, with nothing above rewritten:
+
+```ts
+import { makeUnitOfWork, withUnitOfWork } from "@effect-server-utils/unit-of-work";
+
+// Installs the sink alongside the boundary — they are one decision.
+const runtime = Layer.mergeAll(makeEventBus(), makeUnitOfWork()).pipe(
+  Layer.provide(YourTransactionDriver),
+);
 
 // The boundary a use case declares once, at the end of its pipe.
 const placeOrder = (input: Input) => doTheWork(input).pipe(withUnitOfWork);
