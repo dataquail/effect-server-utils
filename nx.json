@@ -50,6 +50,7 @@
       "manifestRootsToUpdate": ["{projectRoot}"]
     },
     "changelog": {
+      "automaticFromRef": true,
       "projectChangelogs": {
         "file": false,
         "createRelease": "github"
