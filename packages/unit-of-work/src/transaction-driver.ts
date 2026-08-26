@@ -45,5 +45,5 @@ export interface TransactionDriverShape {
 }
 
 export class TransactionDriver extends Context.Service<TransactionDriver, TransactionDriverShape>()(
-  "@effect-server-utils/cqrs/TransactionDriver",
+  "@effect-server-utils/unit-of-work/TransactionDriver",
 ) {}

@@ -35,6 +35,7 @@ const config: ViteUserConfig = {
     alias: {
       ...alias("authz"),
       ...alias("cqrs"),
+      ...alias("unit-of-work"),
     },
   },
 };

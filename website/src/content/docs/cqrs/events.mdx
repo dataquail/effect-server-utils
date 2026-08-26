@@ -50,10 +50,10 @@ write.
 
 So `dispatch` says only "these events happened", and each **subscriber** declares what it needs.
 
-### `subscribe` — same transaction
+### `subscribe` — same boundary
 
-Runs in the publisher's fiber, in registration order, inside its unit of work. The handler's writes
-commit with the publisher's, and **its failure rolls the publisher back**.
+Runs in the publisher's fiber, in registration order, inside whatever boundary the publisher is in. The
+handler's writes commit with the publisher's, and **its failure rolls the publisher back**.
 
 ```ts
 const subscriptions = Effect.gen(function* () {
@@ -69,8 +69,8 @@ exist without its organization.
 
 ### `subscribeAfterCommit` — after the fact, isolated
 
-Runs after the outermost unit of work commits, each handler in a fresh unit of work, its failure logged
-and isolated.
+Runs once the publisher's boundary has completed, each handler in a boundary of its own, its failure
+logged and isolated.
 
 ```ts
 const subscriptions = Effect.gen(function* () {
@@ -79,9 +79,9 @@ const subscriptions = Effect.gen(function* () {
 });
 ```
 
-The failure direction is the opposite of `subscribe`, by design: the producer has already committed, so
-a reaction must not undo it. Handlers here are expected to be **idempotent and independently
-retryable**. Failures go to [`UnhandledFailures`](/effect-server-utils/cqrs/unhandled-failures/).
+The failure direction is the opposite of `subscribe`, by design: the producer is already durable, so a
+reaction must not undo it. Handlers here are expected to be **idempotent and independently retryable**.
+Failures go to [`UnhandledFailures`](/effect-server-utils/cqrs/unhandled-failures/).
 
 ### `stream` — never awaited
 
@@ -102,33 +102,49 @@ construction and that pull. The subscription lives as long as the ambient scope.
 
 This is a third surface rather than a flag on `subscribeAfterCommit` because the delivery contracts
 genuinely differ: an after-commit handler is awaited and its failure isolated, while a stream consumer
-may be a [saga](/effect-server-utils/cqrs/sagas/) that runs for days and must never hold up a flush.
+may be a [saga](/effect-server-utils/cqrs/sagas/) that runs for days and must never hold up a drain.
 
 ### At a glance
 
 |                          | `subscribe`              | `subscribeAfterCommit` | `stream`                     |
 | ------------------------ | ------------------------ | ---------------------- | ---------------------------- |
-| Runs in                  | publisher's fiber        | its own unit of work   | its own fiber                |
-| Timing                   | before commit            | after commit           | after commit                 |
+| Runs in                  | publisher's fiber        | a boundary of its own  | its own fiber                |
+| Timing                   | with the publisher       | once the boundary ends | once the boundary ends       |
 | Failure                  | rolls the publisher back | logged and isolated    | reported, saga keeps running |
 | Awaited by the publisher | yes                      | yes                    | no                           |
 
-## Dispatching requires a unit of work
+## What "after commit" waits for — `DeferralSink`
+
+This package does not know what a transaction is. `dispatch` hands its deferred surfaces — the
+broadcast, and the `subscribeAfterCommit` handlers — to a `DeferralSink` if one is in context, and runs
+them itself at the end of the dispatch if none is.
 
 ```ts
-class EventDispatchedOutsideUnitOfWork {
-  readonly tags: ReadonlyArray<string>;
+interface DeferralSinkShape {
+  readonly defer: (events: ReadonlyArray<Event.Base>) => Effect.Effect<void>;
 }
 ```
 
-`dispatch` outside an open unit of work is a **defect**. Absent one, the immediate subscribers would
-have no transaction to inherit and the eventual ones would buffer onto nothing — so a missing scope
-almost always means a forgotten boundary, and failing loudly beats delivering quietly different
-semantics. It is a _tagged_ defect so a test can name the condition rather than match a sentence.
+That makes the boundary a wiring decision rather than a requirement:
 
-Ordering within a dispatch is deliberate: immediate handlers run first, and events are buffered for
-after-commit delivery **only once those have succeeded**. Their failure aborts the publisher, so there
-would be nothing left to notify after a commit that is no longer going to happen.
+- **No sink.** `subscribeAfterCommit` handlers run at the end of the dispatch that produced them —
+  still after every immediate handler, still isolated from the publisher. Enough for a host with no
+  datastore to coordinate, and the bus works with no extra package installed.
+- **With a sink.** They run once the boundary the sink owns has _succeeded_, each in a boundary of its
+  own. Install [`@effect-server-utils/unit-of-work`](/effect-server-utils/unit-of-work/) and that means
+  after commit, in a fresh transaction, with rollbacks discarding what they buffered.
+
+A handler is written the same way for both, which is what lets a host adopt a unit of work later
+without revisiting one of them. What changes is only when it runs and what it can undo.
+
+A sink also gets to reject a dispatch it cannot place — the unit-of-work sink dies with
+`EventDispatchedOutsideUnitOfWork` when nothing is open, because once you have a boundary, a dispatch
+that forgot one is a bug rather than a different delivery. That check happens **before any immediate
+handler runs**, so a missing boundary is reported while the dispatch is still whole.
+
+`EventBus.drain(events, boundary?)` is the other half of the seam: a sink calls it when its boundary
+completes, and the bus keeps what is its own — which handlers, in what order, spans, isolation — taking
+only "run each one in here" from the caller.
 
 ## Building the bus
 
@@ -158,14 +174,15 @@ up as its own subscription queue growing, which is a diagnosable bug rather than
 
 ## Type reference
 
-| Export                             | What it is                                         |
-| ---------------------------------- | -------------------------------------------------- |
-| `Event.make(tag, fields)`          | declares an event                                  |
-| `Event.Base`                       | `{ readonly _tag: string }` — what a bus routes on |
-| `Event.Type<E>`                    | the value an event carries                         |
-| `Event.spanAttributes(map)`        | type-checked per-tag attribute extractors          |
-| `Event.is`                         | runtime predicate, for reflection                  |
-| `EventBus` / `EventBusShape`       | the bus service                                    |
-| `makeEventBus(options?)`           | builds it                                          |
-| `EventHandler`                     | `(event: Event.Base) => Effect<void>`              |
-| `EventDispatchedOutsideUnitOfWork` | tagged defect                                      |
+| Export                               | What it is                                                 |
+| ------------------------------------ | ---------------------------------------------------------- |
+| `Event.make(tag, fields)`            | declares an event                                          |
+| `Event.Base`                         | `{ readonly _tag: string }` — what a bus routes on         |
+| `Event.Type<E>`                      | the value an event carries                                 |
+| `Event.spanAttributes(map)`          | type-checked per-tag attribute extractors                  |
+| `Event.is`                           | runtime predicate, for reflection                          |
+| `EventBus` / `EventBusShape`         | the bus service                                            |
+| `makeEventBus(options?)`             | builds it                                                  |
+| `EventHandler`                       | `(event: Event.Base) => Effect<void>`                      |
+| `DeferralSink` / `DeferralSinkShape` | where deferred surfaces go, when something owns a boundary |
+| `ReactionBoundary`                   | `(reaction: Effect<void>) => Effect<unknown, unknown>`     |

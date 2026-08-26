@@ -132,6 +132,15 @@ importers:
         specifier: 4.0.0-beta.94
         version: 4.0.0-beta.94
 
+  packages/unit-of-work:
+    devDependencies:
+      '@effect-server-utils/cqrs':
+        specifier: workspace:*
+        version: link:../cqrs
+      effect:
+        specifier: 4.0.0-beta.94
+        version: 4.0.0-beta.94
+
   website:
     dependencies:
       '@astrojs/starlight':

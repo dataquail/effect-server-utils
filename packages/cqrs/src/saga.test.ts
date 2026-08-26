@@ -11,10 +11,7 @@ import * as Stream from "effect/Stream";
 
 import * as Event from "./event.js";
 import { EventBus, makeEventBus } from "./event-bus.js";
-import { RecordingTransactionDriver } from "./internal/transaction-driver-fake.js";
 import * as Saga from "./saga.js";
-import { makeUnitOfWork, UnitOfWork } from "./unit-of-work.js";
-import { UnitOfWorkScope } from "./unit-of-work-scope.js";
 
 const OrderPlaced = Event.make("OrderPlaced", { orderId: Schema.String });
 const PaymentCaptured = Event.make("PaymentCaptured", { orderId: Schema.String });
@@ -25,17 +22,27 @@ class Shipments extends Context.Service<
   { readonly ship: (orderId: string) => Effect.Effect<void> }
 >()("test/Shipments") {}
 
-/** A unit of work and eventual bus over the in-memory driver. */
-const cqrsRuntime = Layer.mergeAll(makeUnitOfWork(), makeEventBus()).pipe(
-  Layer.provide(RecordingTransactionDriver),
-);
+/**
+ * A bus with no deferral sink, so a dispatch broadcasts as part of itself. What
+ * a saga reads is the broadcast; whether it arrives at dispatch time or after a
+ * commit is the sink's business, not the runner's.
+ */
+const cqrsRuntime = makeEventBus();
 
-/** Commits a unit of work that dispatches the given events, then lets sagas run. */
+/**
+ * Something the publisher can be seen to have in its context, standing in for
+ * whatever a real one carries — an open transaction, a request scope. A saga
+ * must never find it.
+ */
+class PublisherScope extends Context.Service<PublisherScope, { readonly open: true }>()(
+  "test/PublisherScope",
+) {}
+
+/** Dispatches the given events from inside a publisher's scope, then lets sagas run. */
 const publish = (events: ReadonlyArray<{ readonly _tag: string }>) =>
   Effect.gen(function* () {
-    const uow = yield* UnitOfWork;
     const bus = yield* EventBus;
-    yield* uow.run(bus.dispatch(events));
+    yield* Effect.provideService(bus.dispatch(events), PublisherScope, { open: true });
     yield* Effect.yieldNow;
   });
 
@@ -89,7 +96,7 @@ describe("Saga", () => {
   // The load-bearing safety property. The runner forks from the layer's scope, so
   // a saga's fiber cannot inherit a publisher's context — if it did, it would
   // issue queries on a connection about to commit and be released.
-  it.effect("does not inherit the publishing unit of work's scope", () =>
+  it.effect("does not inherit the publisher's scope", () =>
     Effect.gen(function* () {
       const sawScope = yield* Ref.make<ReadonlyArray<boolean>>([]);
       const runtime = cqrsRuntime;
@@ -99,7 +106,7 @@ describe("Saga", () => {
         events: [OrderPlaced],
         run: (events) =>
           Stream.runForEach(events, () =>
-            Effect.flatMap(Effect.serviceOption(UnitOfWorkScope), (scope) =>
+            Effect.flatMap(Effect.serviceOption(PublisherScope), (scope) =>
               Ref.update(sawScope, (prev) => [...prev, Option.isSome(scope)]),
             ),
           ),
@@ -113,7 +120,7 @@ describe("Saga", () => {
     }),
   );
 
-  it.effect("a slow saga does not hold up the flush", () =>
+  it.effect("a slow saga does not hold up the dispatch", () =>
     Effect.gen(function* () {
       const started = yield* Ref.make(false);
       const runtime = cqrsRuntime;

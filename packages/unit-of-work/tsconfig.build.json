@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.src.json",
+  // `references` is not inherited through `extends`, so it is repeated here —
+  // and points at cqrs's *build* project, whose declarations are what this one
+  // must compile against.
+  "references": [{ "path": "../cqrs/tsconfig.src.json" }],
+  "compilerOptions": {
+    "types": ["node"],
+    "tsBuildInfoFile": ".tsbuildinfo/build.tsbuildinfo",
+    "outDir": "build/esm",
+    "declarationDir": "build/dts",
+    "stripInternal": true
+  }
+}

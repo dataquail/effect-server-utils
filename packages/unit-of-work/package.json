@@ -1,0 +1,58 @@
+{
+  "name": "@effect-server-utils/unit-of-work",
+  "version": "0.1.0-beta.2",
+  "type": "module",
+  "license": "MIT",
+  "description": "The unit-of-work boundary for Effect: a re-entrant atomicity port over a host's transaction primitive, and the after-commit delivery it gives @effect-server-utils/cqrs's event bus",
+  "author": "zacharyweidenbach",
+  "keywords": [
+    "effect",
+    "effect-ts",
+    "unit-of-work",
+    "transaction",
+    "atomicity",
+    "cqrs",
+    "after-commit",
+    "typescript"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dataquail/effect-server-utils.git",
+    "directory": "packages/unit-of-work"
+  },
+  "homepage": "https://dataquail.github.io/effect-server-utils",
+  "scripts": {
+    "build": "pnpm build-esm && pnpm build-annotate && pnpm build-cjs && build-utils pack-v2 && pnpm build-prune",
+    "build-esm": "tsc -b tsconfig.build.json",
+    "build-cjs": "babel build/esm --plugins @babel/transform-export-namespace-from --plugins @babel/transform-modules-commonjs --out-dir build/cjs --source-maps",
+    "build-annotate": "babel build/esm --plugins annotate-pure-calls --out-dir build/esm --source-maps",
+    "check": "tsc -b tsconfig.json",
+    "test": "vitest run",
+    "coverage": "vitest run --coverage",
+    "build-prune": "node ../../scripts/prune-dist.mjs"
+  },
+  "peerDependencies": {
+    "@effect-server-utils/cqrs": "workspace:*",
+    "effect": "4.0.0-beta.94"
+  },
+  "devDependencies": {
+    "@effect-server-utils/cqrs": "workspace:*",
+    "effect": "4.0.0-beta.94"
+  },
+  "effect": {
+    "generateExports": {
+      "include": [
+        "*.ts"
+      ],
+      "exclude": [
+        "*.test.ts"
+      ]
+    }
+  },
+  "nx": {
+    "includedScripts": []
+  }
+}

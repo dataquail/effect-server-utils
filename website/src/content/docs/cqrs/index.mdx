@@ -73,8 +73,11 @@ see [Dispatch tables](/effect-server-utils/cqrs/dispatch-tables/).
 
 Independently of that pipeline:
 
-- [`withUnitOfWork`](/effect-server-utils/cqrs/unit-of-work/) wraps a write-side use case in an
-  atomicity boundary built over a `TransactionDriver` you supply.
+- [`DeferralSink`](/effect-server-utils/cqrs/events/) is the optional seam that decides what
+  `subscribeAfterCommit` waits for. Install
+  [`@effect-server-utils/unit-of-work`](/effect-server-utils/unit-of-work/) and it means after commit;
+  install nothing and those handlers run at the end of each dispatch. Handlers are written the same way
+  either way.
 - [`EventBus`](/effect-server-utils/cqrs/events/) carries events published inside that boundary, with
   the consistency model picked per subscription.
 - [`Saga.runner`](/effect-server-utils/cqrs/sagas/) runs process managers over the after-commit stream.

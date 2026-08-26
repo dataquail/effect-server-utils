@@ -6,7 +6,7 @@ export default defineConfig({
     starlight({
       title: "Effect Server Utils",
       description:
-        "Server-side building blocks for Effect: typed CQRS buses and declarative per-route authorization.",
+        "Server-side building blocks for Effect: typed CQRS buses, a unit-of-work boundary, and declarative per-route authorization.",
       social: [
         {
           icon: "github",
@@ -30,12 +30,15 @@ export default defineConfig({
             { slug: "cqrs/queries" },
             { slug: "cqrs/dispatch-tables" },
             { slug: "cqrs/events" },
-            { slug: "cqrs/unit-of-work" },
             { slug: "cqrs/sagas" },
             { slug: "cqrs/middleware" },
             { slug: "cqrs/unhandled-failures" },
             { slug: "cqrs/testing" },
           ],
+        },
+        {
+          label: "Unit of Work",
+          items: [{ slug: "unit-of-work", label: "Overview" }],
         },
         {
           label: "AuthZ",

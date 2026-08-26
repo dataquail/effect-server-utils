@@ -4,15 +4,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-An Nx + pnpm monorepo publishing two independent Effect libraries:
+An Nx + pnpm monorepo publishing three Effect libraries:
 
 - **`@effect-server-utils/cqrs`** (`packages/cqrs`) — typed command/query buses, an event bus whose
-  subscriptions choose their consistency model, a unit-of-work port, sagas, middleware.
+  subscriptions choose their consistency model, sagas, middleware.
+- **`@effect-server-utils/unit-of-work`** (`packages/unit-of-work`) — the atomicity boundary over a
+  host-supplied `TransactionDriver`, plus the `DeferralSink` that gives the CQRS event bus's
+  `subscribeAfterCommit` a real commit to wait for.
 - **`@effect-server-utils/authz`** (`packages/authz`) — per-route authorization over a
   declaration-merged config seam.
 
-Neither package depends on the other. `website/` is an Astro + Starlight docs site deployed to GitHub
-Pages.
+`unit-of-work` depends on `cqrs` (peer, `workspace:*`); nothing else depends on anything else.
+`website/` is an Astro + Starlight docs site deployed to GitHub Pages.
 
 ## Commands
 
@@ -47,23 +50,33 @@ pnpm run build:website
 ## Things that will bite you
 
 **Never run `build-utils prepare-v2`.** It is the _codegen_ step and it overwrites `src/index.ts` with a
-generated barrel. Both barrels here are hand-written, and their prose comments are load-bearing
+generated barrel. All three barrels here are hand-written, and their prose comments are load-bearing
 documentation. The build uses `pack-v2` (the packaging step) only, and `effect.generateIndex` has been
-removed from both `package.json` files so nothing regenerates them.
+removed from every `package.json` so nothing regenerates them.
 
 **`effect.generateExports` must exclude `*.test.ts`.** Tests are co-located in `src/`, so without the
 exclusion every test file becomes a published subpath export.
 
 **`dist/` is post-processed by `scripts/prune-dist.mjs`** (each package's `build-prune` step, the last
 thing `build` runs). It deletes the co-located `*.test.ts` that `pack-v2` copies into `dist/src/`, and
-the one-`package.json` subpath proxy directory `pack-v2` writes per entrypoint — 20 unreachable
-directories across the two packages, since `exports` is authoritative for every resolver a consumer of
-an exports-only `effect@4` can be on. `typesVersions` deliberately stays; the script's header comment
+the one-`package.json` subpath proxy directory `pack-v2` writes per entrypoint — unreachable, since
+`exports` is authoritative for every resolver a consumer of an exports-only `effect@4` can be on. `typesVersions` deliberately stays; the script's header comment
 has the full reasoning. `pack-v2` has no flag for either, hence the post-pass rather than a pnpm patch.
 
-**`effect` is an exact peer dependency** (`4.0.0-beta.94`) in both packages, pinned again in the root
+**`effect` is an exact peer dependency** (`4.0.0-beta.94`) in every package, pinned again in the root
 `pnpm.overrides`. Effect 4 betas are mutually incompatible; bumping it is a coordinated breaking change
-to both packages.
+to all three.
+
+**`unit-of-work` peer-depends on `cqrs` as `workspace:*`.** `scripts/fix-workspace-deps.sh` rewrites
+that to the real version in `dist/package.json` at publish time, so the published range is an exact
+pin — which is what the `DeferralSink` coupling warrants while both are pre-1.0.
+
+**`tsconfig.base.json` `paths` target `.ts`, not `.js`.** A `.js` target only resolves when the file is
+already in the compiling program — true within a package, false across one. Before this the
+cross-package import fell back to `any`, which also silently produced 171 `no-unsafe-*` lint errors.
+The project reference in the importing package's `tsconfig.src.json` is what redirects the `.ts` to
+the referenced project's declaration output. **`references` is not inherited through `extends`**, so
+`tsconfig.build.json` repeats it.
 
 **Imports use explicit `.js` extensions.** `moduleResolution` is `NodeNext` and the packages are ESM —
 `import { x } from "./thing.js"` referring to `thing.ts` is correct, not a mistake to "fix".
@@ -92,10 +105,17 @@ incidental are pinned by tests:
 
 - Handlers run in the **dispatching fiber's** context, so a command dispatched inside a caller's
   transaction joins it rather than opening a second one.
+- `cqrs` names no transaction. `EventBus.dispatch` hands its deferred surfaces to a `DeferralSink` if
+  one is in context and runs them itself if none is, so the bus is fully usable with no unit of work
+  installed — that seam is what lets the boundary live in its own package.
 - Middleware **may not widen** a message's success or error channels — that constraint is what lets the
   bus have a seam without invalidating callers' `catchTag`s.
-- The post-commit flush is **uninterruptible**, so reactions to already-durable work are not discarded
+- The post-commit drain is **uninterruptible**, so reactions to already-durable work are not discarded
   by a shutdown.
+- The sink buffers a **closed-over drain effect**, not the bare events, resolving the `EventBus` in the
+  fiber that dispatched. A bus wired deeper than the boundary is therefore still the bus that gets
+  drained — the previous shape looked one up at commit time and silently lost events when it found
+  none.
 - Wiring mistakes (`DuplicateDispatchTag`, `UnroutableTags`, `MissingHandler`) are **tagged defects**,
   so boot checks and tests can match the condition rather than a message string.
 

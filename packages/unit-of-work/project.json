@@ -1,0 +1,45 @@
+{
+  "name": "@effect-server-utils/unit-of-work",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "packages/unit-of-work/src",
+  "projectType": "library",
+  "targets": {
+    "build": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "dependsOn": ["^build"],
+      "inputs": ["production", "^production"],
+      "outputs": ["{projectRoot}/build", "{projectRoot}/dist", "{projectRoot}/.tsbuildinfo"],
+      "options": {
+        "command": "pnpm run build",
+        "cwd": "packages/unit-of-work"
+      }
+    },
+    "check": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "outputs": ["{projectRoot}/.tsbuildinfo"],
+      "options": {
+        "command": "pnpm run check",
+        "cwd": "packages/unit-of-work"
+      }
+    },
+    "test": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "options": {
+        "command": "pnpm run test",
+        "cwd": "packages/unit-of-work"
+      }
+    },
+    "lint": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "options": {
+        "command": "pnpm exec oxlint --type-aware --quiet packages/unit-of-work",
+        "cwd": "{workspaceRoot}"
+      }
+    }
+  },
+  "tags": []
+}
