@@ -28,11 +28,20 @@ jobs:
           fetch-depth: 0
           token: ${{ steps.app-token.outputs.token }}
 
-      - name: Get Version
+      # `nx release` cuts one GitHub release per package, so this workflow runs
+      # once per package and each run has to know which one is its own.
+      - name: Identify the package this release is for
         run: |
-          TAG_NAME=${{github.event.release.tag_name}}
-          echo "PACKAGE_NAME=$(echo $TAG_NAME | cut -d "@" -f 1)" >> $GITHUB_ENV
-          echo "APP_VERSION=$(echo $TAG_NAME | cut -d "@" -f 2)" >> $GITHUB_ENV
+          TAG_NAME='${{ github.event.release.tag_name }}'
+          if [ -z "$TAG_NAME" ]; then
+            echo "No release tag — this is a manual dispatch, so every package will be published."
+            exit 0
+          fi
+          # Tags are `@scope/name@version`, so the split is on the *last* `@`.
+          # Cutting on the first one returns an empty package name for every
+          # scoped package, which is all of them here.
+          echo "PACKAGE_NAME=${TAG_NAME%@*}" >> $GITHUB_ENV
+          echo "APP_VERSION=${TAG_NAME##*@}" >> $GITHUB_ENV
 
       - uses: pnpm/action-setup@v5
 
