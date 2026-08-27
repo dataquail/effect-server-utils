@@ -3,7 +3,7 @@
   "version": "0.1.0-beta.3",
   "type": "module",
   "license": "MIT",
-  "description": "Typed CQRS for Effect: command and query buses with per-message success and error types, an event bus whose subscriptions choose their consistency model, a unit-of-work port, and process managers",
+  "description": "Typed CQRS for Effect: command and query buses with per-message success and error types, an event bus whose subscriptions choose their consistency model, and process managers",
   "author": "zacharyweidenbach",
   "keywords": [
     "effect",
@@ -12,7 +12,7 @@
     "command-bus",
     "query-bus",
     "event-bus",
-    "unit-of-work",
+    "after-commit",
     "saga",
     "typescript"
   ],
