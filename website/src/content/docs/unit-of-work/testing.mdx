@@ -1,0 +1,79 @@
+---
+title: Testing
+description: The real boundary over an in-memory driver — real re-entrancy, real after-commit ordering, real discard-on-rollback, no datastore.
+---
+
+```ts
+import { PassThroughUnitOfWork } from "@effect-server-utils/unit-of-work/testing";
+```
+
+The testing helpers live behind their own subpath, deliberately absent from the main barrel: they are
+in-memory stand-ins for a host's datastore and have no business in a production import graph.
+
+## `PassThroughUnitOfWork`
+
+What a unit test of a use case wires when its repositories are fakes that never consult a transaction.
+
+```ts
+const test = placeOrder(input).pipe(
+  Effect.provide(Layer.mergeAll(makeEventBus(), PassThroughUnitOfWork)),
+  Effect.provide(FakeOrderRepository),
+);
+```
+
+It is the **real** `makeUnitOfWork` over an in-memory driver, not a stub — so a subject that dispatches
+an event gets the same delivery it would get in production: real re-entrancy, real after-commit
+ordering, real discard-on-rollback, and the real `DeferralSink` installed alongside.
+
+Prefer it to a hand-rolled pass-through. The rollback case is the one a hand-rolled double is most
+likely to get wrong, and getting it wrong means a test that passes while production drops events.
+
+## Asserting which scope was opened
+
+```ts
+import { makeRecordingDriver } from "@effect-server-utils/unit-of-work/testing";
+
+const scopesOpened = Effect.gen(function* () {
+  const { driver, scopes } = yield* makeRecordingDriver;
+  const uow = yield* Effect.provide(
+    UnitOfWork,
+    makeUnitOfWork().pipe(Layer.provide(Layer.succeed(TransactionDriver, driver))),
+  );
+
+  yield* uow.run(uow.run(Effect.void));
+
+  deepStrictEqual(yield* scopes, ["transaction", "savepoint"]);
+});
+```
+
+`scopes` records each scope in the order it was asked for, as `"transaction" | "savepoint"`. The driver
+opens nothing real; it reports a scope active for the duration of the effect it wraps, which is the
+whole of what the unit of work reads back from a driver. Depth is a counter, so a nested scope closing
+does not report the enclosing one closed.
+
+`RecordingTransactionDriver` is the same driver as a plain `Layer`, for tests that never inspect the
+recording.
+
+## Driving the failure paths
+
+```ts
+import { driverFailingWith } from "@effect-server-utils/unit-of-work/testing";
+
+const boundary = makeUnitOfWork().pipe(
+  Layer.provide(driverFailingWith(new PersistenceUnavailable({ message: "connection lost" }))),
+);
+```
+
+Every scope this driver is asked for fails with the error you handed it — which is how the
+[demotion of `TransactionFailed` and the propagation of `PersistenceUnavailable`](/effect-server-utils/unit-of-work/errors/)
+are pinned.
+
+## Type reference
+
+| Export                       | What it is                                                         |
+| ---------------------------- | ------------------------------------------------------------------ |
+| `PassThroughUnitOfWork`      | `Layer<UnitOfWork \| DeferralSink>` — the real boundary, in-memory |
+| `makeRecordingDriver`        | `{ driver, scopes }` — records which scopes were opened            |
+| `RecordingTransactionDriver` | the same driver as a `Layer`                                       |
+| `driverFailingWith(error)`   | a driver whose every scope fails with `error`                      |
+| `RecordedScope`              | `"transaction" \| "savepoint"`                                     |

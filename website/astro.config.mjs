@@ -38,7 +38,15 @@ export default defineConfig({
         },
         {
           label: "Unit of Work",
-          items: [{ slug: "unit-of-work", label: "Overview" }],
+          items: [
+            { slug: "unit-of-work", label: "Overview" },
+            { slug: "unit-of-work/boundary" },
+            { slug: "unit-of-work/transaction-driver" },
+            { slug: "unit-of-work/re-entrancy" },
+            { slug: "unit-of-work/after-commit" },
+            { slug: "unit-of-work/errors" },
+            { slug: "unit-of-work/testing" },
+          ],
         },
         {
           label: "AuthZ",

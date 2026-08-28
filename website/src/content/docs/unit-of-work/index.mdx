@@ -1,19 +1,14 @@
 ---
-title: Unit of work
-description: The atomicity boundary a write-side use case declares once — built over a transaction primitive you supply.
+title: Unit of Work Overview
+description: The shape of @effect-server-utils/unit-of-work — one boundary a use case declares, over a transaction primitive you supply.
 ---
 
 ```sh
 pnpm add @effect-server-utils/unit-of-work @effect-server-utils/cqrs effect
 ```
 
-Its own package, because [`@effect-server-utils/cqrs`](/effect-server-utils/cqrs/) has no opinion about
-transactions. The CQRS event bus knows that some subscriptions want to run _after_ whatever produced the
-event has finished; it does not know what "finished" means. This package answers that — and if you never
-install it, the bus still works, running those handlers at the end of each dispatch instead. See
-[Events](/effect-server-utils/cqrs/events/) for what changes and what does not.
-
-`withUnitOfWork` is the combinator a write-side use case applies at the end of its pipe:
+`@effect-server-utils/unit-of-work` is the atomicity boundary a write-side use case declares once, at
+the end of its pipe:
 
 ```ts
 import { withUnitOfWork } from "@effect-server-utils/unit-of-work";
@@ -27,133 +22,80 @@ export const placeOrder = (input: PlaceOrderInput) =>
   }).pipe(withUnitOfWork);
 ```
 
-Every repository write inside commits together or is discarded together, and every immediate event
-subscriber inherits that same boundary.
+Every repository write inside commits together or is discarded together, every immediate event
+subscriber inherits that same boundary, and every after-commit subscriber waits for the commit.
 
-It goes at the **end of the pipe**, visibly, rather than in an inner block — an inner boundary is one
-that dispatched event handlers would silently join without the use case saying so.
+## Its own package, on purpose
 
-The name is deliberate. `transactional` would leak the SQL implementation the abstraction exists to
-hide, and the port is what lets a use case be unit-tested against a pass-through implementation with no
-database in sight.
+[`@effect-server-utils/cqrs`](/effect-server-utils/cqrs/) has no opinion about transactions. Its event
+bus knows that some subscriptions want to run _after_ whatever produced the event has finished; it does
+not know what "finished" means. This package answers that — and if you never install it, the bus still
+works, running those handlers at the end of each dispatch instead. See
+[Events](/effect-server-utils/cqrs/events/) for what changes and what does not.
 
-## What you supply: `TransactionDriver`
+## The pieces
 
-This is the whole of what the unit of work needs from a datastore. Everything else — nesting,
-post-commit buffering, drain ordering, failure isolation — lives in this package.
+**[The boundary](/effect-server-utils/unit-of-work/boundary/)** — `withUnitOfWork`, the combinator a use
+case applies, and `UnitOfWork`, the port it resolves. Where it goes in the pipe is part of the contract.
 
-```ts
-interface TransactionDriverShape {
-  /** Opens a top-level scope. Commits on success, discards on failure. */
-  readonly withTransaction: <A, E, R>(
-    effect: Effect.Effect<A, E, R>,
-  ) => Effect.Effect<A, E | TransactionFailed | PersistenceUnavailable, R>;
+**[The transaction driver](/effect-server-utils/unit-of-work/transaction-driver/)** — the one thing a
+host supplies. Three members, no connection handle in sight.
 
-  /** Opens a nested scope on the ambient one — a savepoint. */
-  readonly withSavepoint: <A, E, R>(
-    effect: Effect.Effect<A, E, R>,
-  ) => Effect.Effect<A, E | TransactionFailed | PersistenceUnavailable, R>;
+**[Re-entrancy](/effect-server-utils/unit-of-work/re-entrancy/)** — a boundary inside a boundary nests
+rather than opening a second connection, and whether a nested failure is fatal is the caller's choice.
 
-  /** Whether a scope is already open — what makes `run` re-entrant. */
-  readonly isActive: Effect.Effect<boolean>;
-}
+**[After commit](/effect-server-utils/unit-of-work/after-commit/)** — the `DeferralSink` this package
+installs, the commit sequence it guarantees, and the drain that runs once the scope has committed.
+
+**[Errors and defects](/effect-server-utils/unit-of-work/errors/)** — what propagates to a use case,
+what is demoted to a defect, and why the split falls where it does.
+
+**[Testing](/effect-server-utils/unit-of-work/testing/)** — the real boundary over an in-memory driver.
+
+## How the pieces fit
+
+```
+   TransactionDriver              what you supply — withTransaction / withSavepoint / isActive
+             │
+             ▼
+   makeUnitOfWork()               Layer<UnitOfWork | DeferralSink, never, TransactionDriver>
+             │
+             ├──► UnitOfWork      the port; `withUnitOfWork` is the combinator over it
+             │
+             └──► DeferralSink    what EventBus.subscribeAfterCommit ends up waiting for
 ```
 
-Your adapter is responsible for making its own connection handle **ambient** to the effect it wraps, so
-a repository inside picks it up. Nothing about that handle appears in this interface; if it did, every
-consumer's read path would have to name it.
+The two services ship together because they are one decision: "after commit" has no meaning until
+something owns a commit, and this is the thing that owns one.
 
 ```ts
-// `makeUnitOfWork` produces two services: the boundary, and the `DeferralSink`
-// the CQRS event bus looks for. They ship together because they are one
-// decision — "after commit" has no meaning until something owns a commit.
 const runtime = Layer.mergeAll(makeEventBus(), makeUnitOfWork()).pipe(
   Layer.provide(PostgresTransactionDriver),
 );
 ```
 
-## Re-entrancy
+## Design commitments
 
-`run` is re-entrant. A bare call opens a scope; a call already inside one **nests** rather than reaching
-for a second connection.
+**The port names no datastore.** A use case depends on `UnitOfWork`, so it can be unit-tested against a
+[pass-through implementation](/effect-server-utils/unit-of-work/testing/) with no database in sight.
+`transactional` would have leaked the SQL implementation the abstraction exists to hide.
 
-Whether a nested failure is fatal to the whole operation is then the caller's choice:
+**The requirement channel is untouched.** The boundary makes its scope handle ambient rather than
+routing it through `R`, so an effect handed to `run` never declared a requirement for one and there is
+nothing to discharge. Pinned by a test, because a host adapter whose internals _do_ name a scope service
+could otherwise narrow `R` for every use case.
 
-- **catching it** discards only the nested scope, leaving the enclosing one free to commit;
-- **letting it propagate** discards everything.
+**Sequencing is the commit guarantee.** A failed scope never reaches the drain, so reactions to work
+that was discarded never fire. A rolled-back nested scope truncates the buffer back to its length on
+entry, for the same reason.
 
-A rolled-back nested scope also truncates the after-commit event buffer back to its length on entry, so
-events from work that was undone never fire.
+**The drain is uninterruptible.** The transaction has committed; an interrupt arriving then must not
+discard every reaction to work that is already durable.
 
-## The commit sequence
+**Wiring mistakes are tagged defects.** `EventDispatchedOutsideUnitOfWork` and `DeferralWithoutEventBus`
+arrive as values a boot check or a test can match on, not as sentences inside a generic error.
 
-1. The effect runs inside the driver's scope. Immediate event subscribers run here, in the publisher's
-   fiber.
-2. As events are dispatched, the `DeferralSink` this layer installed takes them and buffers a drain for
-   each — resolving the event bus at that moment, in the fiber that dispatched, so a bus wired deeper
-   than the boundary is still the one that gets drained.
-3. The scope commits. **A failed scope never reaches step 4** — that sequencing is the whole commit
-   guarantee.
-4. The buffer is drained: stream consumers are broadcast to first and not awaited, then each
-   after-commit handler runs in its own unit of work, its failure caught and reported to
-   [`UnhandledFailures`](/effect-server-utils/cqrs/unhandled-failures/).
+## Next
 
-Step 4 is **uninterruptible**. The transaction has committed, so an interrupt arriving then — a caller
-hanging up, a shutdown — would otherwise discard every reaction to work that is already durable. The
-caller was already waiting for the drain, so the only thing given up is the ability to cancel reactions
-that must happen anyway.
-
-Stream consumers go first, and unawaited, because a process manager may run for days; holding the drain
-for one would stall every later reaction.
-
-Dispatching with no unit of work open is a tagged defect, `EventDispatchedOutsideUnitOfWork`, rather
-than a quietly different delivery: once a boundary is installed, a dispatch that forgot one is a bug.
-
-## Error channels
-
-```ts
-class TransactionFailed {
-  readonly message: string;
-}
-class PersistenceUnavailable {
-  readonly message: string;
-}
-```
-
-**`TransactionFailed`** is the atomicity machinery itself failing — a rejected commit, a savepoint that
-would not release. By the time an effect reaches the unit of work, a repository has already translated
-its own constraint violations into domain errors, so what is left is something no use case can act on.
-`withUnitOfWork` demotes it to a defect in this one place, which is what keeps a use case's error
-channel as clean as its name.
-
-**`PersistenceUnavailable`** is the transient case: the store backing a repository is momentarily unable
-to service the request. It propagates as a failure, because retrying is a real option and a transport
-boundary can turn it into a 503. It lives in this package rather than in a database package so a
-module's `domain/` can name it in a repository port without importing infrastructure.
-
-## Testing
-
-```ts
-import { PassThroughUnitOfWork } from "@effect-server-utils/unit-of-work/testing";
-```
-
-The real boundary over an in-memory driver: real re-entrancy, real after-commit ordering, real
-discard-on-rollback, no datastore. What a unit test of a use case wires when its repositories are fakes
-that never consult a transaction. Prefer it to a hand-rolled pass-through, which tends to get the
-rollback case wrong.
-
-`makeRecordingDriver`, `RecordingTransactionDriver` and `driverFailingWith` are there too, for tests
-that assert which scope was opened or that drive the failure paths.
-
-## Type reference
-
-| Export                                         | What it is                                                    |
-| ---------------------------------------------- | ------------------------------------------------------------- |
-| `withUnitOfWork(effect)`                       | the boundary combinator a use case applies                    |
-| `UnitOfWork` / `UnitOfWorkShape`               | the port, `{ run }`                                           |
-| `makeUnitOfWork()`                             | `Layer<UnitOfWork \| DeferralSink, never, TransactionDriver>` |
-| `TransactionDriver` / `TransactionDriverShape` | what you supply                                               |
-| `TransactionFailed`                            | the boundary itself failed — demoted to a defect              |
-| `PersistenceUnavailable`                       | transient store outage — propagates                           |
-| `EventDispatchedOutsideUnitOfWork`             | dispatched with no boundary open — a tagged defect            |
-| `PassThroughUnitOfWork`                        | the real boundary, in-memory (`/testing`)                     |
+Start with [the boundary](/effect-server-utils/unit-of-work/boundary/), then supply
+[a driver](/effect-server-utils/unit-of-work/transaction-driver/).

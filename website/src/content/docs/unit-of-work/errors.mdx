@@ -1,0 +1,86 @@
+---
+title: Errors and defects
+description: What propagates to a use case, what is demoted to a defect, and why the split falls where it does.
+---
+
+```ts
+class TransactionFailed {
+  readonly message: string;
+}
+class PersistenceUnavailable {
+  readonly message: string;
+}
+```
+
+Two failures cross the boundary from a driver, and they are treated in opposite ways — because a caller
+can act on one and not on the other.
+
+## `TransactionFailed` — demoted to a defect
+
+The atomicity machinery itself failing: a rejected commit, a savepoint that would not release.
+
+By the time an effect reaches the unit of work, a repository has already translated its own constraint
+violations into domain errors. What is left is the boundary failing, which no use case can do anything
+about. `withUnitOfWork` calls `Effect.die` on it in this one place, which is what keeps a use case's
+error channel as clean as its name — no `catchTag` for a condition whose only honest handler is a crash
+report.
+
+`UnitOfWork.run` still types it, for the rare caller that wants it typed.
+
+## `PersistenceUnavailable` — propagates
+
+The transient case: the store backing a repository is momentarily unable to service the request —
+connection lost, backend terminated.
+
+It stays a typed failure because retrying is a real option and a transport boundary can turn it into a
+503:
+
+```ts
+const caught =
+  yield *
+  placeOrder(input).pipe(
+    Effect.catchTag("PersistenceUnavailable", () => HttpServerResponse.empty({ status: 503 })),
+  );
+```
+
+It lives in this package, not in a host's database package, so a module's `domain/` can name it in a
+repository port without importing infrastructure. Your adapter translates its own transient signal into
+this at the boundary.
+
+It is distinct from a constraint violation, which is permanent: a repository either translates that into
+a domain error or lets it die as a defect.
+
+## The two wiring defects
+
+Neither is a failure, because no call site declares them and none could handle them. Both are tagged, so
+a boot check or a test can name the condition instead of matching on a sentence.
+
+**`EventDispatchedOutsideUnitOfWork`** — an event was dispatched with no boundary open. See
+[After commit](/effect-server-utils/unit-of-work/after-commit/): the alternative is worse than a defect,
+since the events would buffer onto something nothing will ever drain.
+
+**`DeferralWithoutEventBus`** — the sink's `defer` was called with no `EventBus` in context, so there
+would be nothing to drain what it was handed. Only an `EventBus` should ever call it.
+
+```ts
+const defect = Result.getSuccess(Cause.findDefect(exit.cause));
+Option.map(defect, (found) => found instanceof EventDispatchedOutsideUnitOfWork);
+```
+
+## At a glance
+
+| Condition                          | Reaches a use case as | Why                                   |
+| ---------------------------------- | --------------------- | ------------------------------------- |
+| `TransactionFailed`                | a defect              | nothing a caller can act on           |
+| `PersistenceUnavailable`           | a typed failure       | retry, or a 503, are real responses   |
+| `EventDispatchedOutsideUnitOfWork` | a defect              | a forgotten boundary is a bug         |
+| `DeferralWithoutEventBus`          | a defect              | a wiring mistake in the sink's caller |
+
+## Type reference
+
+| Export                             | What it is                                             |
+| ---------------------------------- | ------------------------------------------------------ |
+| `TransactionFailed`                | the boundary itself failed — demoted by the combinator |
+| `PersistenceUnavailable`           | transient store outage — propagates                    |
+| `EventDispatchedOutsideUnitOfWork` | dispatched with no boundary open                       |
+| `DeferralWithoutEventBus`          | `defer` called with no bus in context                  |

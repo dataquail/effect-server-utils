@@ -1,0 +1,95 @@
+---
+title: After commit
+description: The DeferralSink this package installs, the commit sequence it guarantees, and the drain that runs once the scope has committed.
+---
+
+`@effect-server-utils/cqrs` lets a subscriber say
+[`subscribeAfterCommit`](/effect-server-utils/cqrs/events/) without knowing what a commit is. It hands
+its deferred surfaces — the stream broadcast and the after-commit handlers — to a `DeferralSink` if one
+is in context, and runs them itself at the end of the dispatch if none is.
+
+```ts
+interface DeferralSinkShape {
+  readonly defer: (events: ReadonlyArray<Event.Base>) => Effect.Effect<void>;
+}
+```
+
+`makeUnitOfWork` installs the sink that makes "after commit" mean after a commit. That is why the two
+services ship from one call: what "after" means is the boundary's to define, and a host that installed a
+boundary has answered it.
+
+## The commit sequence
+
+1. The effect runs inside the driver's scope. **Immediate** event subscribers run here, in the
+   publisher's fiber, inside the same transaction.
+2. As events are dispatched, the sink takes them and buffers a drain for each.
+3. The scope commits. **A failed scope never reaches step 4** — that sequencing is the whole commit
+   guarantee.
+4. The buffer is drained: stream consumers are broadcast to first and not awaited, then each
+   after-commit handler runs in **its own unit of work**, its failure caught and reported to
+   [`UnhandledFailures`](/effect-server-utils/cqrs/unhandled-failures/).
+
+Observed from a test: an immediate subscriber has already run while the boundary is still open; the
+after-commit one has not run until it closes.
+
+## What gets buffered — a drain, not the events
+
+The sink resolves the `EventBus` **at step 2**, in the fiber that dispatched, and buffers a closed-over
+drain effect. It does not buffer the bare events and look a bus up at commit time.
+
+That is not a detail. A host that wires its bus deeper than its unit-of-work boundary — inside a
+request-scoped layer, say — has a bus that the publisher can see and the committing fiber cannot. Held
+as bare events, those events would find no bus at commit time and vanish silently. Held as a drain, the
+bus that was in scope when the dispatch happened is the bus that gets drained.
+
+The sink is otherwise **stateless**: it reads the scope `run` made ambient, so one instance serves every
+unit of work in the process.
+
+## The drain is uninterruptible
+
+The transaction has committed, so an interrupt arriving during step 4 — a caller hanging up, a
+shutdown — would otherwise discard every reaction to work that is already durable. The caller was
+already waiting for the drain, so the only thing given up is the ability to cancel reactions that must
+happen anyway. A test interrupts the committing fiber mid-drain and asserts the reaction still finished.
+
+## Stream consumers go first, and unawaited
+
+A stream consumer may be a [saga](/effect-server-utils/cqrs/sagas/) that runs for days; holding the
+drain open for one would stall every after-commit handler behind it. Broadcasting first and not awaiting
+is what keeps a long-running consumer off the critical path of a request.
+
+## Failure isolation
+
+Each after-commit handler runs in a unit of work of its own, and its failure is caught. The producer has
+already committed and must not be undone by something reacting to it — the failure direction is the
+exact opposite of an immediate subscriber's, and both are pinned by tests:
+
+| A handler dies                      | The producer's exit |
+| ----------------------------------- | ------------------- |
+| in a `subscribe` handler            | fails               |
+| in a `subscribeAfterCommit` handler | succeeds            |
+
+A dying after-commit handler also does not stop its siblings: the others still run.
+
+## Dispatching with no boundary open
+
+```
+EventDispatchedOutsideUnitOfWork: EventBus.dispatch requires a unit of work: no
+UnitOfWorkScope in scope when dispatching 'OrderPlaced' (did you forget withUnitOfWork?)
+```
+
+Once a boundary is installed, a dispatch that forgot one is a bug, not a quietly different delivery —
+the events would buffer onto something nothing will ever drain. The sink dies with a tagged defect
+instead, and the check happens **before any immediate handler runs**, so a missing boundary is reported
+while the dispatch is still whole.
+
+`DeferralWithoutEventBus` is the mirror case: something that is not an `EventBus` called `defer`, so
+there is nothing that could drain what it handed over.
+
+## Type reference
+
+| Export                             | What it is                                               |
+| ---------------------------------- | -------------------------------------------------------- |
+| `DeferralSink` (from `cqrs`)       | the seam; `makeUnitOfWork()` provides the implementation |
+| `EventDispatchedOutsideUnitOfWork` | dispatched with no boundary open — a tagged defect       |
+| `DeferralWithoutEventBus`          | `defer` called by something other than an `EventBus`     |
