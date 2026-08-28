@@ -1,0 +1,81 @@
+---
+title: The boundary
+description: withUnitOfWork — the combinator a write-side use case applies once, at the end of its pipe.
+---
+
+```ts
+import { withUnitOfWork } from "@effect-server-utils/unit-of-work";
+
+export const placeOrder = (input: PlaceOrderInput) =>
+  Effect.gen(function* () {
+    const order = yield* orders.create(input);
+    yield* inventory.reserve(order);
+    yield* eventBus.dispatch([OrderPlaced.make({ orderId: order.id })]);
+    return order.id;
+  }).pipe(withUnitOfWork);
+```
+
+Every repository write inside commits together or is discarded together, and every immediate event
+subscriber inherits that same boundary.
+
+## Where it goes
+
+At the **end of the pipe**, visibly, rather than in an inner block. An inner boundary is one that
+dispatched event handlers would silently join without the use case saying so — the reader of the use
+case could no longer tell, from the use case, what commits with what.
+
+One boundary per logical operation is the shape to aim for. A second one further in is not an error —
+it [nests](/effect-server-utils/unit-of-work/re-entrancy/) — but if you are reaching for one, the
+question worth asking first is whether the inner work is really part of the same operation.
+
+## The port behind it
+
+```ts
+interface UnitOfWorkShape {
+  readonly run: <A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E | TransactionFailed | PersistenceUnavailable, R>;
+}
+```
+
+`withUnitOfWork` is `UnitOfWork.run` plus one thing: it demotes
+[`TransactionFailed`](/effect-server-utils/unit-of-work/errors/) to a defect, in this one place, which
+is what keeps a use case's error channel as clean as its name. Reach for `run` directly only when you
+want that failure typed — a boot-time migration runner, say.
+
+**The requirement channel is untouched.** `run` returns `R` unchanged: the boundary provides its scope
+handle ambiently rather than through `R`, so an effect handed to it never declared a requirement for one
+and there is nothing to discharge. A test pins this, because a host adapter whose internals _do_ name a
+scope service could otherwise narrow `R` for every use case in the application.
+
+## Why the name
+
+`transactional` would leak the SQL implementation the abstraction exists to hide, and there is nothing
+in the port that says "database". That is not decoration: a use case depending on `UnitOfWork` can be
+unit-tested against [a pass-through implementation](/effect-server-utils/unit-of-work/testing/) whose
+repositories are fakes that never consult a transaction, and the boundary still behaves the way it does
+in production.
+
+## Wiring
+
+```ts
+import { makeUnitOfWork } from "@effect-server-utils/unit-of-work";
+import { makeEventBus } from "@effect-server-utils/cqrs";
+
+const runtime = Layer.mergeAll(makeEventBus(), makeUnitOfWork()).pipe(
+  Layer.provide(PostgresTransactionDriver),
+);
+```
+
+`makeUnitOfWork` produces two services: the boundary, and the `DeferralSink` the CQRS event bus looks
+for. They ship together because they are one decision — see
+[After commit](/effect-server-utils/unit-of-work/after-commit/) — and its only requirement is the
+[`TransactionDriver`](/effect-server-utils/unit-of-work/transaction-driver/) you supply.
+
+## Type reference
+
+| Export                           | What it is                                                    |
+| -------------------------------- | ------------------------------------------------------------- |
+| `withUnitOfWork(effect)`         | the boundary combinator a use case applies                    |
+| `UnitOfWork` / `UnitOfWorkShape` | the port, `{ run }`                                           |
+| `makeUnitOfWork()`               | `Layer<UnitOfWork \| DeferralSink, never, TransactionDriver>` |

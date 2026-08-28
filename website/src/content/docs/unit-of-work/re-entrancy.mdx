@@ -1,0 +1,87 @@
+---
+title: Re-entrancy
+description: A boundary inside a boundary nests rather than opening a second connection — and whether a nested failure is fatal is the caller's choice.
+---
+
+`run` is re-entrant. A bare call opens a scope through `withTransaction`; a call already inside one
+opens a **savepoint** through `withSavepoint` instead of reaching for a second connection.
+
+```ts
+const nested = Effect.gen(function* () {
+  const uow = yield* UnitOfWork;
+  yield* uow.run(uow.run(Effect.void));
+  // the driver saw: ["transaction", "savepoint"]
+});
+```
+
+That is what makes the boundary safe to declare on every write-side use case. A command dispatched from
+inside another use case's boundary joins it; it does not deadlock against its own application waiting
+for a connection the caller is holding.
+
+The decision is made by asking the driver
+[`isActive`](/effect-server-utils/unit-of-work/transaction-driver/) — which is why that member has to be
+a depth counter rather than a flag.
+
+## The nested failure is the caller's call
+
+Whether a nested failure is fatal to the whole operation is decided by what the caller does with it:
+
+- **catching it** discards only the nested scope, leaving the enclosing one free to commit;
+- **letting it propagate** discards everything.
+
+```ts
+Effect.gen(function* () {
+  yield* orders.create(input); // enclosing work
+
+  // Best-effort: a failure here rolls back only what the nested scope did.
+  yield* Effect.ignore(withUnitOfWork(analytics.record(input)));
+
+  return order.id;
+}).pipe(withUnitOfWork);
+```
+
+Nothing in the boundary chooses for you, which is the point: "is this sub-operation allowed to fail on
+its own" is a domain question, and the only place it can be answered is the call site that knows both
+sides.
+
+## A rolled-back scope takes its events with it
+
+A nested scope that rolled back truncates the after-commit event buffer back to its length on entry, so
+events dispatched by work that was undone never fire — while the enclosing scope's own events still do.
+
+```ts
+const discarded = Effect.gen(function* () {
+  yield* uow.run(
+    Effect.gen(function* () {
+      yield* bus.dispatch([OuterHappened.make({})]);
+      yield* Effect.ignore(
+        uow.run(
+          Effect.andThen(bus.dispatch([NestedHappened.make({})]), Effect.fail("nested rollback")),
+        ),
+      );
+    }),
+  );
+  // after-commit handlers saw: OuterHappened only
+});
+```
+
+Nested runs otherwise **share** the enclosing scope's buffer, so the whole operation drains once, at the
+outermost commit — not once per nested boundary.
+
+## A scope the boundary did not open
+
+A host that opened its own transaction directly, without going through this boundary, leaves `isActive`
+true with no scope for a nested `run` to inherit. That run gets a throwaway buffer, which nothing will
+ever drain.
+
+The events are not lost in the way they would be if the sink held them bare: the sink resolved the event
+bus when it took them, so what lands in that buffer is a real drain effect holding the right bus. The
+only thing given up is _when_ it runs. Still, it is a wiring shape worth avoiding — let the boundary own
+the outermost scope.
+
+## Scope isolation
+
+The scope is ambient only to the effect inside the boundary. A [saga](/effect-server-utils/cqrs/sagas/)
+runs from its runner's layer scope, so it never sees the unit of work of whatever published the event it
+is reading — if it did, it would issue queries on a connection that is about to commit and be released.
+That property is pinned by a test.

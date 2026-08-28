@@ -131,16 +131,17 @@ That makes the boundary a wiring decision rather than a requirement:
   still after every immediate handler, still isolated from the publisher. Enough for a host with no
   datastore to coordinate, and the bus works with no extra package installed.
 - **With a sink.** They run once the boundary the sink owns has _succeeded_, each in a boundary of its
-  own. Install [`@effect-server-utils/unit-of-work`](/effect-server-utils/unit-of-work/) and that means
-  after commit, in a fresh transaction, with rollbacks discarding what they buffered.
+  own. Install [`@effect-server-utils/unit-of-work`](/effect-server-utils/unit-of-work/after-commit/) and
+  that means after commit, in a fresh transaction, with rollbacks discarding what they buffered.
 
 A handler is written the same way for both, which is what lets a host adopt a unit of work later
 without revisiting one of them. What changes is only when it runs and what it can undo.
 
 A sink also gets to reject a dispatch it cannot place — the unit-of-work sink dies with
-`EventDispatchedOutsideUnitOfWork` when nothing is open, because once you have a boundary, a dispatch
-that forgot one is a bug rather than a different delivery. That check happens **before any immediate
-handler runs**, so a missing boundary is reported while the dispatch is still whole.
+[`EventDispatchedOutsideUnitOfWork`](/effect-server-utils/unit-of-work/errors/) when nothing is open,
+because once you have a boundary, a dispatch that forgot one is a bug rather than a different
+delivery. That check happens **before any immediate handler runs**, so a missing boundary is
+reported while the dispatch is still whole.
 
 `EventBus.drain(events, boundary?)` is the other half of the seam: a sink calls it when its boundary
 completes, and the bus keeps what is its own — which handlers, in what order, spans, isolation — taking

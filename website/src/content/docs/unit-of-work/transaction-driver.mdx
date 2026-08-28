@@ -1,0 +1,94 @@
+---
+title: The transaction driver
+description: The one thing a host supplies — three members, and no connection handle anywhere in the interface.
+---
+
+`TransactionDriver` is the whole of what the unit of work needs from a datastore. Everything about how
+the boundary behaves — nesting, post-commit buffering, drain ordering, failure isolation — lives in this
+package; the SQL is yours.
+
+```ts
+interface TransactionDriverShape {
+  /** Opens a top-level scope. Commits on success, discards on failure. */
+  readonly withTransaction: <A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E | TransactionFailed | PersistenceUnavailable, R>;
+
+  /** Opens a nested scope on the ambient one — a savepoint. */
+  readonly withSavepoint: <A, E, R>(
+    effect: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E | TransactionFailed | PersistenceUnavailable, R>;
+
+  /** Whether a scope is already open — what makes `run` re-entrant. */
+  readonly isActive: Effect.Effect<boolean>;
+}
+```
+
+## The handle stays out of the interface
+
+Your adapter is responsible for making its own connection handle **ambient** to the effect it wraps, so
+a repository inside picks it up. Nothing about that handle appears in `TransactionDriverShape` — if it
+did, every consumer's read path would have to name it, and a repository port in a module's `domain/`
+would be describing a connection type it has no business knowing.
+
+```ts
+export const PostgresTransactionDriver = Layer.effect(
+  TransactionDriver,
+  Effect.gen(function* () {
+    const pool = yield* PgPool;
+    return TransactionDriver.of({
+      // BEGIN / COMMIT / ROLLBACK around the effect, with the connection
+      // provided as a service the repositories inside read.
+      withTransaction: (effect) =>
+        pool.withConnection((connection) =>
+          begin(connection).pipe(
+            Effect.andThen(Effect.provideService(effect, PgConnection, connection)),
+            Effect.tap(() => commit(connection)),
+            Effect.tapCause(() => rollback(connection)),
+          ),
+        ),
+      // SAVEPOINT / RELEASE / ROLLBACK TO on the connection already ambient.
+      withSavepoint: (effect) =>
+        Effect.flatMap(PgConnection, (connection) => savepointAround(connection, effect)),
+      isActive: Effect.map(Effect.serviceOption(PgConnection), Option.isSome),
+    });
+  }),
+);
+```
+
+## What each member owes the boundary
+
+**`withTransaction`** commits on success and discards on failure. The unit of work reads nothing back
+from it beyond that; the drain it runs afterwards is sequenced on this effect succeeding, which is the
+[whole commit guarantee](/effect-server-utils/unit-of-work/after-commit/).
+
+**`withSavepoint`** must be recoverable: a failure the _caller_ catches has to leave the enclosing scope
+free to commit. That property is what makes a nested unit of work useful rather than merely tolerated —
+see [Re-entrancy](/effect-server-utils/unit-of-work/re-entrancy/).
+
+**`isActive`** answers "is a scope already open?" and is the only thing `run` consults to decide between
+the two. Track it as a **depth counter**, not a flag: a nested scope closing must not report the
+enclosing one closed too.
+
+## Translating your errors
+
+An adapter reports exactly two things upward:
+
+- [`TransactionFailed`](/effect-server-utils/unit-of-work/errors/) — the atomicity machinery itself
+  failed. A rejected commit, a savepoint that would not release.
+- [`PersistenceUnavailable`](/effect-server-utils/unit-of-work/errors/) — the store is momentarily
+  unable to service the request. Connection lost, backend terminated.
+
+Everything else belongs below the boundary: by the time an effect reaches the unit of work, a repository
+has already translated its own constraint violations into domain errors.
+
+## Type reference
+
+| Export                                         | What it is                              |
+| ---------------------------------------------- | --------------------------------------- |
+| `TransactionDriver` / `TransactionDriverShape` | the port a host implements              |
+| `TransactionFailed`                            | the atomicity machinery failed          |
+| `PersistenceUnavailable`                       | transient store outage                  |
+| `RecordingTransactionDriver`                   | in-memory driver for tests (`/testing`) |
+| `makeRecordingDriver`                          | the same, plus which scopes were opened |
+| `driverFailingWith(error)`                     | a driver whose every scope fails        |
