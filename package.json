@@ -52,7 +52,7 @@
     "@nx/js": "22.6.5",
     "@swc-node/register": "1.12.1",
     "@swc/core": "1.15.47",
-    "@types/node": "^25.9.4",
+    "@types/node": "^26.4.0",
     "@typescript/native": "npm:typescript@7.0.2",
     "@vitest/coverage-v8": "^3.2.7",
     "babel-plugin-annotate-pure-calls": "^0.4.0",
