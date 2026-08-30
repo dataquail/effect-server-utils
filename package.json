@@ -54,7 +54,7 @@
     "@swc/core": "1.15.47",
     "@types/node": "^25.9.4",
     "@typescript/native": "npm:typescript@7.0.2",
-    "@vitest/coverage-v8": "^3.2.7",
+    "@vitest/coverage-v8": "^4.1.11",
     "babel-plugin-annotate-pure-calls": "^0.4.0",
     "effect": "4.0.0-beta.94",
     "eslint-plugin-codegen": "^0.34.1",
@@ -68,7 +68,7 @@
     "read-package-up": "^12.0.0",
     "typescript": "^5.9.3",
     "verdaccio": "6.9.2",
-    "vitest": "^3.2.7"
+    "vitest": "^4.1.11"
   },
   "nx": {
     "includedScripts": [],
@@ -95,7 +95,7 @@
       "@effect/vitest": "4.0.0-beta.94",
       "@effect/build-utils": "0.8.9",
       "@effect/language-service": "0.87.2",
-      "vitest": "^3.2.7",
+      "vitest": "^4.1.11",
       "esbuild": "^0.25.0",
       "flatted": "^3.4.2",
       "form-data": "^4.0.4",
