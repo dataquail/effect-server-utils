@@ -62,6 +62,27 @@ That is usually what you want — a policy check that cannot see the row the sam
 would be wrong more often than right. It is worth knowing when a read model is populated
 asynchronously: inside the transaction you are reading the write side's view of the world.
 
+## Publishing part of a group
+
+A module often owns more messages than any one consumer should be able to send. `Query.subsetOf`
+narrows a group to named tags, and a dispatcher built over the result demands only those tags'
+registrations — so handing it to a consumer grants exactly what it names:
+
+```ts
+// The module owns seven queries; a peer should be able to ask one.
+export const membershipQueries = Query.subsetOf(organizationQueries, "FindMembership");
+
+// The consumer acquires that one question, and no other.
+const queries = yield * Query.dispatcher(membershipQueries);
+const result = yield * queries.FindMembership({ userId, organizationId });
+```
+
+The subset reuses the very message definitions the full group registered handlers for, so nothing is
+registered twice: `handlersOf` on the whole group is what satisfies a dispatcher over any part of it.
+
+Adding a message to the full group does not widen a subset — the tag list is the whole grant, which is
+what makes this usable as a published boundary rather than a convenience.
+
 ## Type reference
 
 | Export                              | What it is                                             |
@@ -70,6 +91,7 @@ asynchronously: inside the transaction you are reading the write side's view of 
 | `Query.group(...queries)`           | a module's slice of the read side                      |
 | `Query.handlersOf(group, handlers)` | `Layer<Registered<G>, never, HandlerServices<G, H>>`   |
 | `Query.dispatcher(group, options?)` | `Effect<Dispatcher<G>, never, Scope \| Registered<G>>` |
+| `Query.subsetOf(group, ...tags)`    | a group narrowed to named tags                         |
 | `Query.is` / `Query.isGroup`        | runtime predicates for reflection                      |
 | `QueryBus` / `QueryBusShape`        | the application-wide read-side bus                     |
 | `makeQueryBus(table, options?)`     | builds it from a routing table                         |

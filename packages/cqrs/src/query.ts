@@ -90,8 +90,36 @@ export type Handlers<G extends AnyGroup> = Message.Handlers<G>;
 /** The services a group's handlers collectively require. */
 export type HandlerServices<G extends AnyGroup, H> = Message.HandlerServices<G, H>;
 
-/** What a built handler set provides, and what dispatching a query demands. */
+/**
+ * What registering one query's handler provides, and what dispatching that query
+ * demands. Branded by tag, so a dispatcher carved with `subsetOf` demands only the
+ * queries it carries rather than every query declared beside them.
+ */
+export type RegisteredTag<Tag extends string> = Message.RegisteredTag<Tag>;
+
+/** Every tag a group carries, as registration tokens. */
 export type Registered<G extends AnyGroup> = Message.Registered<G>;
+
+/** The tags a group carries, as a union of literals. */
+export type Tags<G extends AnyGroup> = Message.TagsOf<G>;
+
+/** The queries a group carries, as a union. */
+export type Messages<G extends AnyGroup> = Message.MessagesOf<G>;
+
+/** The queries a group carries whose tag is among `Selected`. */
+export type Subset<G extends AnyGroup, Selected extends string> =
+  Extract<Messages<G>, { readonly tag: Selected }> extends infer M extends Any ? M : never;
+
+/**
+ * A group narrowed to some of its queries — the surface a module publishes when a
+ * consumer should be able to ask one question and not the rest. A dispatcher built
+ * over it demands only these tags' registrations, and finds handlers registered
+ * through the whole group.
+ */
+export const subsetOf = <G extends AnyGroup, const Selected extends ReadonlyArray<Tags<G>>>(
+  queryGroup: G,
+  ...tags: Selected
+): Group<Subset<G, Selected[number]>> => Message.subsetOf(queryGroup, ...tags);
 
 /** Per-query span-attribute extractors, keyed by tag. */
 export type SpanAttributes<G extends AnyGroup> = Message.SpanAttributes<G>;

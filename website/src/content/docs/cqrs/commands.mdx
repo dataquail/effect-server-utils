@@ -135,6 +135,27 @@ dispatching never consults it.
 message it publishes actually made it into a group. That is the one completeness question a bus cannot
 answer for you — a definition nobody put in a group is invisible to every bus.
 
+## Publishing part of a group
+
+A module often owns more messages than any one consumer should be able to send. `Command.subsetOf`
+narrows a group to named tags, and a dispatcher built over the result demands only those tags'
+registrations — so handing it to a consumer grants exactly what it names:
+
+```ts
+// The module owns seven queries; a peer should be able to ask one.
+export const membershipQueries = Query.subsetOf(organizationQueries, "FindMembership");
+
+// The consumer acquires that one question, and no other.
+const queries = yield * Query.dispatcher(membershipQueries);
+const result = yield * queries.FindMembership({ userId, organizationId });
+```
+
+The subset reuses the very message definitions the full group registered handlers for, so nothing is
+registered twice: `handlersOf` on the whole group is what satisfies a dispatcher over any part of it.
+
+Adding a message to the full group does not widen a subset — the tag list is the whole grant, which is
+what makes this usable as a published boundary rather than a convenience.
+
 ## Type reference
 
 | Export                                             | What it is                                             |
@@ -143,6 +164,7 @@ answer for you — a definition nobody put in a group is invisible to every bus.
 | `Command.group(...commands)`                       | a module's slice of the write side                     |
 | `Command.handlersOf(group, handlers)`              | `Layer<Registered<G>, never, HandlerServices<G, H>>`   |
 | `Command.dispatcher(group, options?)`              | `Effect<Dispatcher<G>, never, Scope \| Registered<G>>` |
+| `Command.subsetOf(group, ...tags)`                 | a group narrowed to named tags                         |
 | `Command.is` / `Command.isGroup`                   | runtime predicates for reflection                      |
 | `Command.Payload<M>` / `Success<M>` / `Failure<M>` | a message's three channels                             |
 | `Command.Any` / `Command.AnyGroup`                 | erased forms, for constraints                          |
