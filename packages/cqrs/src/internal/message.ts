@@ -151,6 +151,48 @@ export const group = <Side extends string, const Messages extends ReadonlyArray<
     group: Transport.makeGroupCarrier(messages.map((message) => message.carrier)),
   }) as never;
 
+/** The tags a group carries, as a union of literals. */
+export type TagsOf<G extends AnyGroup<string>> =
+  G extends Group<string, infer Messages> ? Messages["tag"] : never;
+
+/** The messages a group carries, as a union. */
+export type MessagesOf<G extends AnyGroup<string>> =
+  G extends Group<string, infer Messages> ? Messages : never;
+
+/**
+ * The messages a group carries whose tag is among `Tags`.
+ *
+ * The `infer … extends` carries the constraint through: a bare `Extract` loses
+ * that the result is still a message, which `check` tolerates and declaration
+ * emit does not.
+ */
+export type SubsetOf<G extends AnyGroup<string>, Tags extends string> =
+  Extract<MessagesOf<G>, { readonly tag: Tags }> extends infer M extends Any<G["side"]> ? M : never;
+
+/**
+ * A group narrowed to some of its messages.
+ *
+ * The messages are the same objects, so the carrier the narrowed group builds is
+ * over the very rpcs the full group registered handlers for — which is what makes
+ * a dispatcher over the subset find handlers registered through the whole. It
+ * demands only the tags it carries, so a module can publish a dispatch surface
+ * that is a subset of its own without the consumer gaining the rest.
+ */
+export const subsetOf = <G extends AnyGroup<string>, const Tags extends ReadonlyArray<TagsOf<G>>>(
+  messageGroup: G,
+  ...tags: Tags
+): Group<G["side"], SubsetOf<G, Tags[number]>> => {
+  const wanted = new Set<string>(tags);
+  const messages = messageGroup.messages.filter((message) => wanted.has(message.tag));
+  // A tag the group does not carry would silently narrow to nothing, and the
+  // dispatcher built from it would be missing a method its type promises.
+  if (messages.length !== wanted.size) {
+    const missing = tags.filter((tag) => !messageGroup.tags.includes(tag));
+    throw new Error(`subsetOf: ${messageGroup.side} group does not carry ${missing.join(", ")}`);
+  }
+  return group(messageGroup.side, ...messages);
+};
+
 /**
  * Whether a value is a message of the given side. A host needs this to reflect
  * over its own modules and ask whether everything it exports is reachable — a
@@ -180,17 +222,28 @@ export type HandlerServices<G extends AnyGroup<string>, H> =
 declare const RegisteredBrand: unique symbol;
 
 /**
- * What a built handler set provides, and what dispatching demands.
+ * What registering one message's handler provides, and what dispatching that
+ * message demands.
  *
  * Deliberately opaque. The runtime value is the transport's own handler context,
  * but naming that type here would put it in this package's emitted declarations —
  * so a consumer's `.d.ts` would reference the transport even though its source
- * never imports it. This token is bookkeeping: only `handlersOf` produces it and
- * only a bus consumes it.
+ * never imports it.
+ *
+ * Branded by TAG rather than by group, because that is what the transport already
+ * keys on: registering a group's handlers provides one entry per tag, not one
+ * entry for the group. Erasing that to a group-shaped token made the group the
+ * unit of dispatch permission — a caller that needed one message had to be handed
+ * every message beside it. Per tag, `subsetOf` can carve a dispatcher that demands
+ * only what it carries.
  */
-export interface Registered<G extends AnyGroup<string>> {
-  readonly [RegisteredBrand]: G;
+export interface RegisteredTag<Tag extends string> {
+  readonly [RegisteredBrand]: Tag;
 }
+
+/** Every tag a group carries, as registration tokens. */
+export type Registered<G extends AnyGroup<string>> =
+  G extends Group<string, infer Messages> ? RegisteredTag<Messages["tag"]> : never;
 
 export const handlersOf = <G extends AnyGroup<string>, H extends Handlers<G>>(
   messageGroup: G,
