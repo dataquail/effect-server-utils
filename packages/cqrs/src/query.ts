@@ -91,11 +91,20 @@ export type Handlers<G extends AnyGroup> = Message.Handlers<G>;
 export type HandlerServices<G extends AnyGroup, H> = Message.HandlerServices<G, H>;
 
 /**
- * What registering one query's handler provides, and what dispatching that query
- * demands. Branded by tag, so a dispatcher carved with `subsetOf` demands only the
- * queries it carries rather than every query declared beside them.
+ * What registering one query's handler provides, and what dispatching that
+ * query demands. Branded by tag, so a dispatcher carved with `subsetOf` demands
+ * only the querys it carries rather than every query declared beside them.
+ *
+ * A re-export, deliberately, NOT `export type RegisteredTag<Tag> =
+ * Message.RegisteredTag<Tag>`. An alias sends TypeScript to the declaration in
+ * `internal/`, so a consumer emitting declarations for any layer whose
+ * requirements include one of these gets TS2742 — "cannot be named without a
+ * reference to .../internal/message.js". Re-exporting the symbol gives it a
+ * public path. Nothing in this repo can catch a regression here: the type is
+ * identical either way and only a consumer's declaration emit can see the
+ * difference, which is why this note is the guard.
  */
-export type RegisteredTag<Tag extends string> = Message.RegisteredTag<Tag>;
+export { type RegisteredTag } from "./internal/message.js";
 
 /** Every tag a group carries, as registration tokens. */
 export type Registered<G extends AnyGroup> = Message.Registered<G>;
