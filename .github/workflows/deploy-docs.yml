@@ -2,12 +2,27 @@ name: Deploy Documentation
 
 on:
   workflow_dispatch:
+  # Called by `publish.yml` once a package has actually reached the npm
+  # registry, so the site the docs describe is never ahead of what is
+  # installable. Kept as a reusable workflow rather than a `workflow_run`
+  # trigger so the deploy is a job of the publish run: it inherits that run's
+  # success as its `needs`, and it shows up in the same check list instead of
+  # as a detached run nobody looks at.
+  workflow_call:
 
 permissions:
   contents: read
   pages: write
   id-token: write
 
+# `nx release` cuts one GitHub release per package, so a release of all three
+# fans out into three publish runs and three calls to this workflow, all
+# building identical content. The shared `pages` group serialises them; GitHub
+# keeps at most one run pending per group and cancels the rest, so the fan-out
+# costs one redundant deploy at worst.
+#
+# `cancel-in-progress` stays false: cancelling mid-deploy would leave Pages
+# serving a half-uploaded artifact, and the runs are interchangeable anyway.
 concurrency:
   group: pages
   cancel-in-progress: false
