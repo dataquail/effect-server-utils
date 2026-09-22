@@ -4,7 +4,8 @@
 # 1. Configures git for GitHub Actions
 # 2. Builds packages
 # 3. Resolves workspace:* dependencies to real versions
-# 4. Publishes the package this run is for, and verifies it against the registry
+# 4. Works out which packages still need publishing, publishes those, and
+#    verifies them against the registry
 
 set -e
 
@@ -23,29 +24,60 @@ echo "Fixing workspace dependencies..."
 # Call the fix-workspace-deps.sh script
 ./scripts/fix-workspace-deps.sh
 
-# `nx release` cuts one GitHub release per package and this workflow runs on
-# each of them, so publishing every package from every run means N runs racing
-# to PUT the same N versions. One wins each version and the rest get a 403 for
-# publishing over something that is now already there — which is what happened
-# on the 0.1.0-beta.3 release, where two of three runs went red over a set of
-# packages that had all published perfectly well.
+# Which packages this run publishes is decided here, from the registry, rather
+# than by the trigger that started the run.
 #
-# Scoping each run to the package its own release named is what makes them
-# independent. `PACKAGE_NAME` comes from the release tag; absent it (a manual
-# dispatch) publish everything, which is the only case where that is wanted.
-PROJECT_ARGS=()
-if [ -n "${PACKAGE_NAME:-}" ]; then
-  echo "Publishing ${PACKAGE_NAME}, the package this release is for..."
-  PROJECT_ARGS=(--projects="$PACKAGE_NAME")
-else
-  echo "No release tag in the environment — publishing every package..."
+# A package whose built version is already on npm has nothing to do — and the
+# reason why does not matter: a previous attempt may have published it, this
+# release may not have touched it, or someone may have pushed it by hand. All
+# three want the same answer, so asking the registry covers all three at once
+# and makes a re-run idempotent by construction.
+#
+# This is also what lets a whole release be one run. Publishing used to be one
+# run per package, triggered by the per-package GitHub releases `nx release`
+# cuts, because a run that published *everything* raced the others to PUT the
+# same versions: one won each version and the rest took a 403 for publishing
+# over something already there. That is what reddened two of three runs on the
+# 0.1.0-beta.3 release. Selecting on the registry removes the race instead of
+# sharding around it — there is one run, and it publishes whatever is missing.
+echo
+echo "Deciding what needs publishing..."
+
+TO_PUBLISH=()   # nx project names, for --projects
+INTENDED=()     # name@version, for the verification pass below
+
+for manifest in packages/*/dist/package.json; do
+  [ -f "$manifest" ] || continue
+
+  name=$(node -p "JSON.parse(require('fs').readFileSync('$manifest','utf8')).name")
+  version=$(node -p "JSON.parse(require('fs').readFileSync('$manifest','utf8')).version")
+
+  if npm view "$name@$version" version >/dev/null 2>&1; then
+    echo "  ⏭️  $name@$version is already on the registry"
+  else
+    echo "  📦 $name@$version needs publishing"
+    TO_PUBLISH+=("$name")
+    INTENDED+=("$name@$version")
+  fi
+done
+
+if [ ${#TO_PUBLISH[@]} -eq 0 ]; then
+  echo
+  echo "✅ Every built package is already on the registry — nothing to publish."
+  exit 0
 fi
+
+# `--projects` takes nx project names; each package's project.json names it
+# after the package, so the names collected above are already the right ones.
+PROJECTS=$(IFS=,; echo "${TO_PUBLISH[*]}")
+echo
+echo "Publishing: $PROJECTS"
 
 PUBLISH_LOG=$(mktemp)
 trap 'rm -f "$PUBLISH_LOG"' EXIT
 
 set +e
-npx nx release publish --verbose "${PROJECT_ARGS[@]}" 2>&1 | tee "$PUBLISH_LOG"
+npx nx release publish --verbose --projects="$PROJECTS" 2>&1 | tee "$PUBLISH_LOG"
 PUBLISH_EXIT=${PIPESTATUS[0]}
 set -e
 
@@ -66,22 +98,15 @@ set -e
 echo
 echo "Verifying against the registry..."
 
+# Only the versions this run set out to publish. Anything that was already
+# there was never this run's responsibility and is not evidence either way.
 MISSING=()
-for manifest in packages/*/dist/package.json; do
-  [ -f "$manifest" ] || continue
-  name=$(node -p "JSON.parse(require('fs').readFileSync('$manifest','utf8')).name")
-  version=$(node -p "JSON.parse(require('fs').readFileSync('$manifest','utf8')).version")
-
-  # Only the package this run was responsible for.
-  if [ -n "${PACKAGE_NAME:-}" ] && [ "$name" != "$PACKAGE_NAME" ]; then
-    continue
-  fi
-
-  if npm view "$name@$version" version >/dev/null 2>&1; then
-    echo "  ✅ $name@$version is on the registry"
+for spec in "${INTENDED[@]}"; do
+  if npm view "$spec" version >/dev/null 2>&1; then
+    echo "  ✅ $spec is on the registry"
   else
-    echo "  ❌ $name@$version is NOT on the registry"
-    MISSING+=("$name@$version")
+    echo "  ❌ $spec is NOT on the registry"
+    MISSING+=("$spec")
   fi
 done
 

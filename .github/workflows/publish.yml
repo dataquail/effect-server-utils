@@ -1,14 +1,37 @@
 name: Publish
 
+# One publish run per release, not one per package.
+#
+# This used to trigger on `release: created`. `nx release` cuts one GitHub
+# release per package, so that trigger fanned a single release out into three
+# identical runs, and every problem since has been a consequence of that:
+#
+#   - three runs raced to PUT the same versions, so two took a 403 for
+#     publishing over what the third had just pushed (fixed by sharding each
+#     run to its own package — see `scripts/publish.sh`);
+#   - three runs then called the docs deploy with identical content, and the
+#     `pages` concurrency group cancelled the surplus, failing the publish runs
+#     that called them.
+#
+# Both were the fan-out, patched twice. `on-push.yml` now calls this workflow
+# once, after `nx release` has cut every release it is going to cut, and
+# `scripts/publish.sh` decides for itself which packages still need publishing
+# by asking the registry. One run, one decision point, one docs deploy.
 on:
   workflow_dispatch:
-  release:
-    types:
-      - created
+  workflow_call:
+    inputs:
+      ref:
+        description: >-
+          Commit to publish from. `on-push.yml` passes the commit `nx release`
+          created, since the version bump lands after the push that triggered
+          it and the default checkout would build the versions we just
+          superseded. Defaults to the triggering ref for a manual run.
+        required: false
+        type: string
 
 permissions:
-  contents: write
-  packages: write
+  contents: read
   id-token: write
 
 jobs:
@@ -16,32 +39,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/create-github-app-token@v1
-        id: app-token
-        with:
-          app-id: ${{ secrets.VERSION_BUMPER_APPID }}
-          private-key: ${{ secrets.VERSION_BUMPER_SECRET }}
-
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          token: ${{ steps.app-token.outputs.token }}
-
-      # `nx release` cuts one GitHub release per package, so this workflow runs
-      # once per package and each run has to know which one is its own.
-      - name: Identify the package this release is for
-        run: |
-          TAG_NAME='${{ github.event.release.tag_name }}'
-          if [ -z "$TAG_NAME" ]; then
-            echo "No release tag — this is a manual dispatch, so every package will be published."
-            exit 0
-          fi
-          # Tags are `@scope/name@version`, so the split is on the *last* `@`.
-          # Cutting on the first one returns an empty package name for every
-          # scoped package, which is all of them here.
-          echo "PACKAGE_NAME=${TAG_NAME%@*}" >> $GITHUB_ENV
-          echo "APP_VERSION=${TAG_NAME##*@}" >> $GITHUB_ENV
+          ref: ${{ inputs.ref || github.sha }}
 
       - uses: pnpm/action-setup@v5
 
@@ -51,13 +53,12 @@ jobs:
           node-version-file: .nvmrc
           cache: "pnpm"
           registry-url: https://registry.npmjs.org/
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_CONFIG_PROVENANCE: true
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Builds, resolves `workspace:*`, then publishes whichever packages are
+      # not already on the registry at their built version.
       - name: Publish packages
         run: ./scripts/publish.sh
         env:
@@ -75,6 +76,8 @@ jobs:
   deploy-docs:
     needs: publish
     uses: ./.github/workflows/deploy-docs.yml
+    with:
+      ref: ${{ inputs.ref || github.sha }}
     permissions:
       contents: read
       pages: write

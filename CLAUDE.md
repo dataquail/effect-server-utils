@@ -122,4 +122,15 @@ incidental are pinned by tests:
 ## Releasing
 
 `nx release` with `projectsRelationship: "independent"`. Push to `main` → version + tag + GitHub
-release; creating that release triggers the npm publish from `packages/*/dist`. See `RELEASE.md`.
+release per changed package → **one** publish run → docs deploy. See `RELEASE.md`.
+
+**The whole release is a single run, deliberately.** `publish.yml` is not triggered by `release:
+created`; `on-push.yml` calls it once after `nx release`. That trigger fans one release out into one
+run per package, and both bugs this pipeline has had came from the fan-out: runs racing to publish the
+same versions (403s on the loser), then runs racing to deploy the same docs (the `pages` concurrency
+group cancels the surplus, and a cancelled `workflow_call` job fails the run that called it). Restoring
+that trigger reintroduces both.
+
+**`scripts/publish.sh` chooses its own targets** — it publishes whatever is not already on the registry
+at its built version, rather than being told by the trigger which package is "its". That is what makes
+one run able to publish any subset, and what makes a re-run idempotent.
