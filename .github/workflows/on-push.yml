@@ -84,6 +84,11 @@ jobs:
   release:
     needs: [lint, test, check]
     runs-on: ubuntu-latest
+    outputs:
+      # The commit `nx release` created. Everything downstream must build from
+      # this and not from `github.sha`, which is the push that triggered the
+      # run and therefore still carries the pre-bump versions.
+      released-sha: ${{ steps.release.outputs.released-sha }}
     steps:
       - uses: actions/create-github-app-token@v1
         id: app-token
@@ -114,9 +119,30 @@ jobs:
         run: pnpm exec nx run-many -t build --projects='packages/*'
 
       - name: Run nx release
+        id: release
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           git config user.name github-actions
           git config user.email github-actions@github.com
           npx nx release --skip-publish
+          echo "released-sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  # `nx release --skip-publish` above cuts the versions, tags and GitHub
+  # releases; this publishes them. Calling the workflow here rather than
+  # letting it trigger on `release: created` is the point — that trigger fires
+  # once per package, and the resulting fan-out is what caused both the publish
+  # race and the docs-deploy cancellations. See the header of `publish.yml`.
+  #
+  # `publish.sh` no-ops cleanly when every built version is already on the
+  # registry, which is what a push that released nothing looks like.
+  publish:
+    needs: release
+    uses: ./.github/workflows/publish.yml
+    with:
+      ref: ${{ needs.release.outputs.released-sha }}
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    secrets: inherit
