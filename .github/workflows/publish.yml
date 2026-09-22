@@ -64,3 +64,18 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
           # We need to set provenance to true in order to generate provenance statement
           NPM_CONFIG_PROVENANCE: true
+
+  # The docs describe the published API, so they are redeployed off the back of
+  # a publish that actually landed — `needs: publish` means a run that failed to
+  # reach the registry leaves the live site on the last version that did.
+  #
+  # Permissions are declared here rather than inherited: a called workflow runs
+  # with the calling job's token, and the workflow-level block above grants no
+  # `pages: write`.
+  deploy-docs:
+    needs: publish
+    uses: ./.github/workflows/deploy-docs.yml
+    permissions:
+      contents: read
+      pages: write
+      id-token: write

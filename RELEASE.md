@@ -84,6 +84,9 @@ configured not to open PRs for `effect` or `@effect/vitest` for that reason.
 ## After a release
 
 - Confirm the GitHub release notes read sensibly — they are generated from the conventional commits.
-- If the documented API changed, deploy the docs: run the **Deploy Documentation** workflow
-  (`workflow_dispatch`), which builds `website/` and publishes it to GitHub Pages at
-  <https://dataquail.github.io/effect-server-utils>.
+- The docs redeploy themselves: **Publish** calls the **Deploy Documentation** workflow once the
+  package is on the registry, which builds `website/` and publishes it to GitHub Pages at
+  <https://dataquail.github.io/effect-server-utils>. A release of all three packages fans out into
+  three publish runs, and the shared `pages` concurrency group collapses their deploys.
+- **Deploy Documentation** still takes a `workflow_dispatch`, for redeploying a docs-only change that
+  did not go out with a release.
