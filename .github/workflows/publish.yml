@@ -72,8 +72,22 @@ jobs:
   # Permissions are declared here rather than inherited: a called workflow runs
   # with the calling job's token, and the workflow-level block above grants no
   # `pages: write`.
+  #
+  # Only the `cqrs` release calls this. `nx release` cuts one GitHub release per
+  # package, so a full release fans out into three publish runs — and all three
+  # used to call this workflow with identical content. The `pages` concurrency
+  # group serialised them, but GitHub keeps at most one run *pending* per group
+  # and cancels the rest, and a cancelled `workflow_call` job fails its calling
+  # run: every release put a red X on a publish that had in fact reached npm.
+  # Electing a single caller is what stops that, and `cqrs` is the election
+  # because it is the package the other two build on.
+  #
+  # The cost is that a wave releasing only `authz` and/or `unit-of-work` will
+  # not redeploy the site. That is what `workflow_dispatch` on `deploy-docs.yml`
+  # is for — run it by hand when the docs need to move without a `cqrs` release.
   deploy-docs:
     needs: publish
+    if: startsWith(github.event.release.tag_name, '@effect-server-utils/cqrs@') || github.event_name == 'workflow_dispatch'
     uses: ./.github/workflows/deploy-docs.yml
     permissions:
       contents: read

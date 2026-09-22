@@ -15,14 +15,16 @@ permissions:
   pages: write
   id-token: write
 
-# `nx release` cuts one GitHub release per package, so a release of all three
-# fans out into three publish runs and three calls to this workflow, all
-# building identical content. The shared `pages` group serialises them; GitHub
-# keeps at most one run pending per group and cancels the rest, so the fan-out
-# costs one redundant deploy at worst.
+# A release of all three packages is three publish runs, but only the `cqrs`
+# one calls this workflow — see the `deploy-docs` job in `publish.yml` for why
+# a single caller is elected rather than letting the fan-out queue here. This
+# group therefore guards the case that is left: a `workflow_dispatch` racing a
+# release, or two releases landing close together.
 #
-# `cancel-in-progress` stays false: cancelling mid-deploy would leave Pages
-# serving a half-uploaded artifact, and the runs are interchangeable anyway.
+# `cancel-in-progress` stays false: GitHub cancels pending runs beyond the
+# first, and a cancelled `workflow_call` job fails the publish run that called
+# it, so cancellation is never the cheap outcome here. Cancelling mid-deploy
+# would also leave Pages serving a half-uploaded artifact.
 concurrency:
   group: pages
   cancel-in-progress: false
