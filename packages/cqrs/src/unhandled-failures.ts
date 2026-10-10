@@ -8,7 +8,7 @@ import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 /** Which isolated position the work was running in when it failed. */
-export type UnhandledFailureKind = "after-commit-handler" | "saga";
+export type UnhandledFailureKind = "after-commit-handler" | "after-commit-flush" | "saga";
 
 export interface UnhandledFailure {
   /** The handler or saga that failed, by the name it was registered under. */

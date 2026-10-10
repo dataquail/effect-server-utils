@@ -104,3 +104,26 @@ export const is = (u: unknown): u is Any =>
   u !== null &&
   (u as { readonly [TypeId]?: unknown })[TypeId] === TypeId &&
   typeof (u as { readonly tag?: unknown }).tag === "string";
+
+/**
+ * One event bound for one named after-commit subscription, in a form that
+ * survives a process boundary: what a durable transport writes beside the
+ * publisher's commit and what a consumer hands back to `EventBus.deliver`.
+ *
+ * One envelope per subscription rather than per event, because a queue retries
+ * deliveries and a delivery is to one handler — a second handler's failure must
+ * not redeliver the event to the first. `eventId` is shared by every envelope
+ * of one event, so `(eventId, handler)` is what makes a delivery idempotent.
+ *
+ * `payload` is the event encoded through its own schema's JSON codec, which is
+ * exactly what `checkEventsSerializable` already proves round-trips.
+ */
+export const Envelope = Schema.Struct({
+  eventId: Schema.String,
+  tag: Schema.String,
+  handler: Schema.String,
+  occurredAt: Schema.String,
+  payload: Schema.Json,
+});
+
+export type Envelope = typeof Envelope.Type;

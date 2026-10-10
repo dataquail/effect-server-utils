@@ -83,6 +83,11 @@ The failure direction is the opposite of `subscribe`, by design: the producer is
 reaction must not undo it. Handlers here are expected to be **idempotent and independently retryable**.
 Failures go to [`UnhandledFailures`](/effect-server-utils/cqrs/unhandled-failures/).
 
+A third argument names the subscription — `{ name: "billing.sendReceipt" }`. In-process the name only
+labels its failure reports; a host that delivers after-commit reactions
+[durably](/effect-server-utils/unit-of-work/after-commit/#durable-delivery-opt-in) addresses envelopes by
+it, and requires it.
+
 ### `stream` — never awaited
 
 Subscribes to the given tags and hands back a stream. Only events broadcast while subscribed arrive:
