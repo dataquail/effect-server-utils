@@ -10,8 +10,8 @@ import type * as Query from "./query.js";
  * Checks a host would run in its own test suite, kept out of the package's main
  * surface on purpose.
  *
- * The checker derives sample values with `fast-check`, which is a real runtime
- * import. Reached through the barrel it would ride into every consumer's
+ * The checker derives sample values with Effect's `Arbitrary` generator, which is
+ * test-only machinery. Reached through the barrel it would ride into every consumer's
  * production process for a check that only ever runs in a test, so it lives
  * behind its own entry point — `@effect-server-utils/cqrs/testing` — and nothing in the main
  * import graph names it.

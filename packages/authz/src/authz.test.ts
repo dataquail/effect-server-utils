@@ -30,13 +30,13 @@ const Actions = {
 
 type HostAction = (typeof Actions)[keyof typeof Actions];
 
-class StoreUnavailable extends Schema.TaggedErrorClass<StoreUnavailable>()("StoreUnavailable", {
+class StoreUnavailable extends Schema.TaggedError<StoreUnavailable>()("StoreUnavailable", {
   message: Schema.String,
 }) {}
 
-class ResourceGone extends Schema.TaggedErrorClass<ResourceGone>()("ResourceGone", {}) {}
+class ResourceGone extends Schema.TaggedError<ResourceGone>()("ResourceGone", {}) {}
 
-class Denied extends Schema.TaggedErrorClass<Denied>()("Denied", {
+class Denied extends Schema.TaggedError<Denied>()("Denied", {
   message: Schema.String,
 }) {}
 

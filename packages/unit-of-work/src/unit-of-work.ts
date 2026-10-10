@@ -15,7 +15,7 @@ import { TransactionDriver, type TransactionFailed } from "./transaction-driver.
  * failure — no publisher declares it and none could handle it — but a tagged one,
  * so a test can name the condition instead of matching on a sentence.
  */
-export class EventDispatchedOutsideUnitOfWork extends Schema.TaggedErrorClass<EventDispatchedOutsideUnitOfWork>()(
+export class EventDispatchedOutsideUnitOfWork extends Schema.TaggedError<EventDispatchedOutsideUnitOfWork>()(
   "EventDispatchedOutsideUnitOfWork",
   { tags: Schema.Array(Schema.String) },
 ) {
@@ -27,7 +27,7 @@ export class EventDispatchedOutsideUnitOfWork extends Schema.TaggedErrorClass<Ev
 }
 
 /** A sink was handed events by something that is not an `EventBus`. */
-export class DeferralWithoutEventBus extends Schema.TaggedErrorClass<DeferralWithoutEventBus>()(
+export class DeferralWithoutEventBus extends Schema.TaggedError<DeferralWithoutEventBus>()(
   "DeferralWithoutEventBus",
   { tags: Schema.Array(Schema.String) },
 ) {

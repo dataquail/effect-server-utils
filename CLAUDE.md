@@ -63,9 +63,8 @@ the one-`package.json` subpath proxy directory `pack-v2` writes per entrypoint â
 `exports` is authoritative for every resolver a consumer of an exports-only `effect@4` can be on. `typesVersions` deliberately stays; the script's header comment
 has the full reasoning. `pack-v2` has no flag for either, hence the post-pass rather than a pnpm patch.
 
-**`effect` is an exact peer dependency** (`4.0.0-beta.94`) in every package, pinned again in the root
-`pnpm.overrides`. Effect 4 betas are mutually incompatible; bumping it is a coordinated breaking change
-to all three.
+**`effect` is an exact peer dependency** (`4.0.2`) in every package, pinned again in the root
+`pnpm.overrides`. Bumping it is a coordinated change to all three.
 
 **`unit-of-work` peer-depends on `cqrs` as `workspace:*`.** `scripts/fix-workspace-deps.sh` rewrites
 that to the real version in `dist/package.json` at publish time, so the published range is an exact

@@ -36,11 +36,11 @@
   },
   "peerDependencies": {
     "@effect-server-utils/cqrs": "workspace:*",
-    "effect": "4.0.0-beta.94"
+    "effect": "4.0.2"
   },
   "devDependencies": {
     "@effect-server-utils/cqrs": "workspace:*",
-    "effect": "4.0.0-beta.94"
+    "effect": "4.0.2"
   },
   "effect": {
     "generateExports": {

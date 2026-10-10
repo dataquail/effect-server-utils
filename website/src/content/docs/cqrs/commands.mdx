@@ -12,7 +12,7 @@ declares. Defining one is the only thing a feature module has to do to make it d
 import * as Schema from "effect/Schema";
 import { Command } from "@effect-server-utils/cqrs";
 
-class OrderNotFound extends Schema.TaggedErrorClass<OrderNotFound>()("OrderNotFound", {
+class OrderNotFound extends Schema.TaggedError<OrderNotFound>()("OrderNotFound", {
   orderId: Schema.String,
 }) {}
 

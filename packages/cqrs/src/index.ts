@@ -1,6 +1,6 @@
 // `./testing.js` is deliberately absent from this barrel and from the generated
-// index: its serializability checks derive sample values with `fast-check`, a real
-// runtime import that has no business in a consumer's production process. Reach it
+// index: its serializability checks derive sample values with Effect's `Arbitrary`
+// generator, test-only machinery that has no business in a consumer's production process. Reach it
 // at `@effect-server-utils/cqrs/testing`, from a test.
 
 // Declaring and handling messages: `Command.make`, `Command.group`, `Command.handlersOf`,

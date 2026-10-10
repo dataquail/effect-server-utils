@@ -1,12 +1,12 @@
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import type * as Layer from "effect/Layer";
+import * as Rpc from "effect/rpc/Rpc";
+import * as RpcClient from "effect/rpc/RpcClient";
+import * as RpcGroup from "effect/rpc/RpcGroup";
+import * as RpcServer from "effect/rpc/RpcServer";
 import type * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
-import * as Rpc from "effect/unstable/rpc/Rpc";
-import * as RpcClient from "effect/unstable/rpc/RpcClient";
-import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
-import * as RpcServer from "effect/unstable/rpc/RpcServer";
 
 import type { Middleware } from "../middleware.js";
 
@@ -15,8 +15,8 @@ import type { Middleware } from "../middleware.js";
  *
  * Everything else works against the aliases below, so the transport is a single
  * file to replace rather than a concern spread through the package. That is worth
- * something concrete: `effect/unstable/rpc` is explicitly unstable and pinned to an
- * exact beta, and this package is meant to be published — the day a bump breaks,
+ * something concrete: `effect/rpc` is marked `@stability unstable` and pinned to an
+ * exact release, and this package is meant to be published — the day a bump breaks,
  * the blast radius is here and nowhere else. A dependency rule keeps it that way.
  *
  * Deliberately *not* an abstract interface with one implementation. Nothing is

@@ -13,7 +13,7 @@ import * as Schema from "effect/Schema";
 import * as Command from "./command.js";
 import * as Middleware from "./middleware.js";
 
-class Rejected extends Schema.TaggedErrorClass<Rejected>()("Rejected", {
+class Rejected extends Schema.TaggedError<Rejected>()("Rejected", {
   subject: Schema.String,
 }) {}
 

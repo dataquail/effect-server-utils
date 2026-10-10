@@ -20,7 +20,7 @@ class Ambient extends Context.Service<Ambient, { readonly value: string }>()(
   "test/command-bus/Ambient",
 ) {}
 
-class SubjectRejected extends Schema.TaggedErrorClass<SubjectRejected>()("SubjectRejected", {
+class SubjectRejected extends Schema.TaggedError<SubjectRejected>()("SubjectRejected", {
   subject: Schema.String,
 }) {}
 
