@@ -1,9 +1,12 @@
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
@@ -66,6 +69,7 @@ export interface EventBusShape {
   readonly subscribeAfterCommit: <E extends Event.Any>(
     event: E,
     handler: (event: Event.Type<E>) => Effect.Effect<void>,
+    options?: AfterCommitOptions,
   ) => Effect.Effect<void>;
   /**
    * Subscribes to the events of the given tags and hands back their stream. Only
@@ -107,6 +111,79 @@ export interface EventBusShape {
    * broadcast and the handler drain arrive at different times.
    */
   readonly broadcast: (events: ReadonlyArray<Event.Base>) => Effect.Effect<void>;
+  /**
+   * Seals these events for durable delivery: one `Event.Envelope` per event per
+   * after-commit subscription, each event's payload encoded through its own
+   * schema. An event no after-commit subscription answers yields nothing, so a
+   * durable host writes nothing for it.
+   *
+   * Every subscription it seals for must be named — the name is the envelope's
+   * address, and a positional one would silently re-route in-flight envelopes
+   * the next time registration order changed. An unnamed one is a defect,
+   * `UnnamedAfterCommitSubscription`.
+   */
+  readonly envelop: (
+    events: ReadonlyArray<Event.Base>,
+  ) => Effect.Effect<ReadonlyArray<Event.Envelope>>;
+  /**
+   * Runs the one subscription an envelope is addressed to, inside `boundary`,
+   * and reports how it ended rather than failing — a queue consumer acks on
+   * success and retries otherwise, and a failure here is the input to that
+   * decision, not something to propagate.
+   *
+   * An envelope no registered subscription answers, or whose payload no longer
+   * decodes, fails with `UndeliverableEnvelope`: retrying it cannot help. Every
+   * failure is also reported, exactly as a failure in `drain` is.
+   */
+  readonly deliver: <A = void, E = never, R = never>(
+    envelope: Event.Envelope,
+    boundary?: (reaction: Effect.Effect<void>) => Effect.Effect<A, E, R>,
+  ) => Effect.Effect<Exit.Exit<A, E | UndeliverableEnvelope>, never, R>;
+}
+
+export interface AfterCommitOptions {
+  /**
+   * The subscription's stable identity, unique among one event's after-commit
+   * subscriptions. Optional in-process, where it only names the handler in
+   * spans and failure reports; required by a durable transport, which addresses
+   * envelopes and records deliveries by it.
+   */
+  readonly name: string;
+}
+
+/** Two after-commit subscriptions to one event claimed the same name. */
+export class DuplicateSubscriptionName extends Schema.TaggedError<DuplicateSubscriptionName>()(
+  "DuplicateSubscriptionName",
+  { tag: Schema.String, name: Schema.String },
+) {
+  override get message(): string {
+    return `[EventBus] more than one after-commit subscription to '${this.tag}' is named '${this.name}'`;
+  }
+}
+
+/** An event was sealed for durable delivery while one of its subscriptions had no name. */
+export class UnnamedAfterCommitSubscription extends Schema.TaggedError<UnnamedAfterCommitSubscription>()(
+  "UnnamedAfterCommitSubscription",
+  { tag: Schema.String },
+) {
+  override get message(): string {
+    return `[EventBus] '${this.tag}' has an after-commit subscription with no name, so it cannot be delivered durably. Pass { name } to subscribeAfterCommit.`;
+  }
+}
+
+/** An envelope that no retry can deliver. */
+export class UndeliverableEnvelope extends Schema.TaggedError<UndeliverableEnvelope>()(
+  "UndeliverableEnvelope",
+  {
+    eventId: Schema.String,
+    tag: Schema.String,
+    handler: Schema.String,
+    reason: Schema.Literals(["unknown-subscription", "undecodable-payload"]),
+  },
+) {
+  override get message(): string {
+    return `[EventBus] envelope ${this.eventId} for '${this.tag}' → '${this.handler}' is undeliverable: ${this.reason}`;
+  }
 }
 
 export class EventBus extends Context.Service<EventBus, EventBusShape>()(
@@ -122,8 +199,35 @@ const register = (registry: Ref.Ref<Registry>, tag: string, handler: EventHandle
     return next;
   });
 
+/**
+ * An after-commit subscription keeps its event definition beside its handler:
+ * the schema is what seals a payload into an envelope and opens it again, so a
+ * bus that has a subscription to an event already has everything needed to
+ * deliver it durably. No separate event registry to keep in step.
+ */
+interface AfterCommitSubscription {
+  readonly event: Event.Any;
+  readonly name: string | undefined;
+  readonly handler: EventHandler;
+}
+
+type AfterCommitRegistry = ReadonlyMap<string, ReadonlyArray<AfterCommitSubscription>>;
+
 /** The `drain` boundary a host that owns none supplies: run the reaction as it is. */
 const inline: ReactionBoundary = (reaction) => reaction;
+
+const jsonCodec = (event: Event.Any) =>
+  Schema.toCodecJson(event.schema as Schema.Codec<unknown, unknown>);
+
+/** Time-ordered, so an outbox keyed on it is also ordered by when events happened. */
+const uuidV7 = (timestampMillis: number): string => {
+  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
+  for (let i = 0; i < 6; i++) bytes[i] = Math.floor(timestampMillis / 2 ** (8 * (5 - i))) & 0xff;
+  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x70;
+  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+};
 
 /**
  * Builds the bus, optionally with per-event span-attribute extractors — pass the
@@ -139,7 +243,7 @@ export const makeEventBus = (
     EventBus,
     Effect.gen(function* () {
       const immediate = yield* Ref.make<Registry>(new Map());
-      const afterCommit = yield* Ref.make<Registry>(new Map());
+      const afterCommit = yield* Ref.make<AfterCommitRegistry>(new Map());
       const extractors = options.spanAttributes ?? {};
       // Unbounded so a broadcast never blocks the drain. A bounded buffer would
       // either block the publisher or drop silently; a consumer that stops
@@ -150,8 +254,21 @@ export const makeEventBus = (
       const subscribe: EventBusShape["subscribe"] = (event, handler) =>
         register(immediate, event.tag, handler as EventHandler);
 
-      const subscribeAfterCommit: EventBusShape["subscribeAfterCommit"] = (event, handler) =>
-        register(afterCommit, event.tag, handler as EventHandler);
+      const subscribeAfterCommit: EventBusShape["subscribeAfterCommit"] = (
+        event,
+        handler,
+        subscription,
+      ) =>
+        Effect.flatMap(Ref.get(afterCommit), (registered) => {
+          const existing = registered.get(event.tag) ?? [];
+          const name = subscription?.name;
+          if (name !== undefined && existing.some((entry) => entry.name === name)) {
+            return Effect.die(new DuplicateSubscriptionName({ tag: event.tag, name }));
+          }
+          const next = new Map(registered);
+          next.set(event.tag, [...existing, { event, name, handler: handler as EventHandler }]);
+          return Ref.set(afterCommit, next);
+        });
 
       const broadcast: EventBusShape["broadcast"] = (events) =>
         Effect.asVoid(PubSub.publishAll(broadcasts, events));
@@ -167,13 +284,14 @@ export const makeEventBus = (
 
         const registered = yield* Ref.get(afterCommit);
         for (const event of events) {
-          for (const [index, handler] of (registered.get(event._tag) ?? []).entries()) {
-            yield* boundary(handler(event)).pipe(
+          for (const [index, subscription] of (registered.get(event._tag) ?? []).entries()) {
+            yield* boundary(subscription.handler(event)).pipe(
               Effect.catchCause((cause) =>
                 reportUnhandled({
-                  // Handlers register as bare functions, so the position in the
-                  // tag's registration order is the only name one has.
-                  source: `${event._tag}#${index}`,
+                  // An unnamed handler registered as a bare function, so its
+                  // position in the tag's registration order is the only name
+                  // it has.
+                  source: subscription.name ?? `${event._tag}#${index}`,
                   kind: "after-commit-handler",
                   eventTag: event._tag,
                   cause,
@@ -184,6 +302,83 @@ export const makeEventBus = (
           }
         }
       });
+
+      const envelop: EventBusShape["envelop"] = Effect.fnUntraced(function* (
+        events: ReadonlyArray<Event.Base>,
+      ): Effect.fn.Return<ReadonlyArray<Event.Envelope>> {
+        const registered = yield* Ref.get(afterCommit);
+        const envelopes: Array<Event.Envelope> = [];
+        for (const event of events) {
+          const subscriptions = registered.get(event._tag) ?? [];
+          const [first] = subscriptions;
+          if (first === undefined) continue;
+
+          const occurredAt = yield* Clock.currentTimeMillis;
+          const eventId = uuidV7(occurredAt);
+          // An event that fails its own schema was constructed around `make`;
+          // that is a bug in the publisher, not a condition a caller handles.
+          const payload = yield* Effect.orDie(
+            Schema.encodeUnknownEffect(jsonCodec(first.event))(event),
+          );
+
+          for (const subscription of subscriptions) {
+            if (subscription.name === undefined) {
+              return yield* Effect.die(new UnnamedAfterCommitSubscription({ tag: event._tag }));
+            }
+            envelopes.push({
+              eventId,
+              tag: event._tag,
+              handler: subscription.name,
+              occurredAt: new Date(occurredAt).toISOString(),
+              payload,
+            });
+          }
+        }
+        return envelopes;
+      });
+
+      const deliver = Effect.fnUntraced(function* (
+        envelope: Event.Envelope,
+        boundary: (
+          reaction: Effect.Effect<void>,
+        ) => Effect.Effect<unknown, unknown, unknown> = inline,
+      ): Effect.fn.Return<Exit.Exit<unknown, unknown>, never, unknown> {
+        const undeliverable = (reason: UndeliverableEnvelope["reason"]) =>
+          new UndeliverableEnvelope({
+            eventId: envelope.eventId,
+            tag: envelope.tag,
+            handler: envelope.handler,
+            reason,
+          });
+
+        const subscription = (yield* Ref.get(afterCommit))
+          .get(envelope.tag)
+          ?.find((entry) => entry.name === envelope.handler);
+
+        const outcome = yield* Effect.exit(
+          (subscription === undefined
+            ? Effect.fail(undeliverable("unknown-subscription"))
+            : Schema.decodeEffect(jsonCodec(subscription.event))(envelope.payload).pipe(
+                Effect.mapError(() => undeliverable("undecodable-payload")),
+                Effect.flatMap((event) => boundary(subscription.handler(event as Event.Base))),
+              )
+          ).pipe(
+            Effect.withSpan(`event.deliver.${envelope.tag}`, {
+              attributes: { "event.id": envelope.eventId, "event.handler": envelope.handler },
+            }),
+          ),
+        );
+
+        if (Exit.isFailure(outcome)) {
+          yield* reportUnhandled({
+            source: envelope.handler,
+            kind: "after-commit-handler",
+            eventTag: envelope.tag,
+            cause: outcome.cause,
+          });
+        }
+        return outcome;
+      }) as EventBusShape["deliver"];
 
       const dispatch: EventBusShape["dispatch"] = Effect.fnUntraced(function* (
         events: ReadonlyArray<Event.Base>,
@@ -227,8 +422,10 @@ export const makeEventBus = (
 
       return EventBus.of({
         broadcast,
+        deliver,
         dispatch,
         drain,
+        envelop,
         stream: (tags) => {
           const wanted = new Set(tags);
           return Effect.map(PubSub.subscribe(broadcasts), (subscription) =>

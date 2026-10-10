@@ -16,7 +16,9 @@
 // subscribers simply run at the end of each dispatch.
 export {
   DeferralWithoutEventBus,
+  deliverOnce,
   EventDispatchedOutsideUnitOfWork,
+  makeDurableUnitOfWork,
   makeUnitOfWork,
   UnitOfWork,
   type UnitOfWorkShape,
@@ -40,3 +42,15 @@ export {
 // standing, which is what makes "the store is momentarily unavailable" the only
 // persistence failure a use case ever has to think about.
 export { PersistenceUnavailable } from "./persistence-unavailable.js";
+
+// The host's half of durable after-commit delivery, both opt-in. `makeDurableUnitOfWork`
+// writes each after-commit reaction through `AfterCommitTransport` inside the
+// publisher's transaction instead of running it from memory; `deliverOnce` runs one
+// delivered envelope behind a `DeliveryLedger` claim, which is what makes an
+// at-least-once queue exactly-once for what the handler commits.
+export {
+  AfterCommitTransport,
+  type AfterCommitTransportShape,
+  DeliveryLedger,
+  type DeliveryLedgerShape,
+} from "./durable.js";

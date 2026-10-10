@@ -86,10 +86,86 @@ while the dispatch is still whole.
 `DeferralWithoutEventBus` is the mirror case: something that is not an `EventBus` called `defer`, so
 there is nothing that could drain what it handed over.
 
+## Durable delivery (opt-in)
+
+Everything above is the default, and it is in-memory: a process that dies between step 3 and the end of
+step 4 loses the reactions it had buffered. A host that cannot accept that — one whose reactions send
+email, or that runs where a process may not outlive its request — swaps the constructor once, at
+composition:
+
+```ts
+import { makeDurableUnitOfWork } from "@effect-server-utils/unit-of-work";
+
+const UnitOfWorkLive = makeDurableUnitOfWork().pipe(
+  Layer.provide(Layer.mergeAll(TransactionDriverLive, OutboxTransportLive)),
+);
+```
+
+It is a whole-application choice, not a per-subscription one: every after-commit subscription in the
+process is delivered the same way, and handlers are written identically under both. What changes is the
+sequence.
+
+1. As events are dispatched, the sink asks the bus to **seal** them: one `Event.Envelope` per event per
+   after-commit subscription, the payload encoded through the event's own schema. It hands them to the
+   host's `AfterCommitTransport.enqueue` **inside the transaction** — typically an outbox `INSERT`.
+2. Immediate subscribers run, as before.
+3. The scope commits, and the envelopes commit with it — or vanish with it.
+4. `AfterCommitTransport.flush` runs with the same envelopes, to relay them to whatever delivers them.
+   A failed flush is reported as `after-commit-flush` and the publisher still succeeds: the rows are
+   committed, so a sweeper can flush them again. Stream consumers are broadcast to in-process after
+   the flush.
+
+```ts
+interface AfterCommitTransportShape {
+  readonly enqueue: (envelopes: ReadonlyArray<Event.Envelope>) => Effect.Effect<void>; // in the transaction
+  readonly flush: (envelopes: ReadonlyArray<Event.Envelope>) => Effect.Effect<void>; // after commit
+}
+```
+
+A dispatch that no after-commit subscription answers seals nothing, so it costs the transaction no
+statement. A rolled-back savepoint takes its envelopes with it, the same way it truncates the in-memory
+buffer.
+
+### Subscriptions need names
+
+An envelope is addressed to a subscription by name, so a durable boundary requires one:
+
+```ts
+yield * bus.subscribeAfterCommit(OrderPlaced, sendReceipt, { name: "billing.sendReceipt" });
+```
+
+A positional identity would silently re-route in-flight envelopes the next time registration order
+changed. Sealing an event with an unnamed after-commit subscription dies with
+`UnnamedAfterCommitSubscription`; two subscriptions to one event under one name die at registration with
+`DuplicateSubscriptionName`. In-process, the name is optional and labels the handler's failure reports.
+
+### Consuming
+
+```ts
+const exit = yield * deliverOnce(envelope); // Exit<"delivered" | "duplicate", …>
+```
+
+`deliverOnce` decodes the envelope, runs **only** the subscription it is addressed to inside a unit of
+work of its own, and returns an `Exit` for a queue consumer to ack or retry on. It never fails. An
+envelope no registered subscription answers, or whose payload no longer decodes, fails with
+`UndeliverableEnvelope` — dead-letter it; no retry can help.
+
+Inside that unit of work it first asks the host's `DeliveryLedger` to `claim(eventId, handler)`, and
+skips the handler when the claim was already taken. The claim commits or rolls back with the handler's
+own writes, so a queue's at-least-once delivery becomes **exactly-once for everything the handler
+commits through the same transaction**. A side effect outside it — an email — is still at-least-once:
+pass `eventId` to the provider as an idempotency key where it accepts one.
+
 ## Type reference
 
-| Export                             | What it is                                               |
-| ---------------------------------- | -------------------------------------------------------- |
-| `DeferralSink` (from `cqrs`)       | the seam; `makeUnitOfWork()` provides the implementation |
-| `EventDispatchedOutsideUnitOfWork` | dispatched with no boundary open — a tagged defect       |
-| `DeferralWithoutEventBus`          | `defer` called by something other than an `EventBus`     |
+| Export                             | What it is                                                    |
+| ---------------------------------- | ------------------------------------------------------------- |
+| `DeferralSink` (from `cqrs`)       | the seam; `makeUnitOfWork()` provides the implementation      |
+| `EventDispatchedOutsideUnitOfWork` | dispatched with no boundary open — a tagged defect            |
+| `DeferralWithoutEventBus`          | `defer` called by something other than an `EventBus`          |
+| `makeDurableUnitOfWork()`          | the boundary with after-commit reactions written to an outbox |
+| `AfterCommitTransport`             | host port: `enqueue` in the transaction, `flush` after commit |
+| `DeliveryLedger`                   | host port: `claim(eventId, handler)` in the consumer's UoW    |
+| `deliverOnce(envelope)`            | runs one delivered envelope behind a ledger claim             |
+| `Event.Envelope` (from `cqrs`)     | `{ eventId, tag, handler, occurredAt, payload }`              |
+| `UndeliverableEnvelope` (`cqrs`)   | unknown subscription or undecodable payload — dead-letter it  |

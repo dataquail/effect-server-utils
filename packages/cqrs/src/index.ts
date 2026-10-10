@@ -68,4 +68,18 @@ export { DeferralSink, type DeferralSinkShape, type ReactionBoundary } from "./d
 // boundary of its own, and never can; `stream` feeds a saga and is never awaited.
 // A producer says only that something happened, so one event can serve consumers
 // that need different things.
-export { EventBus, type EventBusShape, type EventHandler, makeEventBus } from "./event-bus.js";
+//
+// A host that delivers after-commit reactions durably asks the bus for the rest:
+// `envelop` seals events into one `Event.Envelope` per named subscription inside
+// the publisher's transaction, and `deliver` opens one again and runs exactly the
+// subscription it is addressed to, reporting how it ended.
+export {
+  type AfterCommitOptions,
+  DuplicateSubscriptionName,
+  EventBus,
+  type EventBusShape,
+  type EventHandler,
+  makeEventBus,
+  UndeliverableEnvelope,
+  UnnamedAfterCommitSubscription,
+} from "./event-bus.js";

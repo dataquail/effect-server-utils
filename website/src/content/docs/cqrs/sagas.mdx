@@ -81,9 +81,12 @@ for compensation.
 
 :::caution[Delivery is in-memory and lossy across a restart]
 A saga's state lives in the fiber running it, and its events arrive over a subscription with no replay,
-so a process death loses whatever was in flight. That is the same durability boundary the eventual
-event bus already has, and a durable event log fixes both at once. Until then, keep a saga's decisions
-idempotent.
+so a process death loses whatever was in flight. Keep a saga's decisions idempotent.
+
+[Durable delivery](/effect-server-utils/unit-of-work/after-commit/#durable-delivery-opt-in) does not
+change this. It makes `subscribeAfterCommit` handlers durable through an outbox; stream consumers are
+still broadcast to in-process, after the flush. A saga therefore needs a long-lived process, and is not
+a fit for a host whose layers live only as long as one request.
 :::
 
 ## Type reference

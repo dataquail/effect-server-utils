@@ -1,8 +1,9 @@
-import type { DeferralSink } from "@effect-server-utils/cqrs";
+import type { DeferralSink, Event } from "@effect-server-utils/cqrs";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 
+import { AfterCommitTransport, type AfterCommitTransportShape, DeliveryLedger } from "./durable.js";
 import type { PersistenceUnavailable } from "./persistence-unavailable.js";
 import {
   TransactionDriver,
@@ -88,4 +89,51 @@ export const driverFailingWith = (
  */
 export const PassThroughUnitOfWork: Layer.Layer<UnitOfWork | DeferralSink> = makeUnitOfWork().pipe(
   Layer.provide(RecordingTransactionDriver),
+);
+
+/**
+ * A transport that keeps what it is handed: what a durable unit of work
+ * enqueued inside its transaction, and what it flushed after commit. Nothing is
+ * delivered — a test that wants delivery hands a flushed envelope to
+ * `deliverOnce` itself, which is the shape of the real contract.
+ *
+ * Enqueued envelopes are never taken back, since there is no transaction here
+ * to roll back; compare `flushed`, which only ever holds committed work.
+ */
+export const makeRecordingTransport: Effect.Effect<{
+  readonly transport: AfterCommitTransportShape;
+  readonly layer: Layer.Layer<AfterCommitTransport>;
+  readonly enqueued: Effect.Effect<ReadonlyArray<Event.Envelope>>;
+  readonly flushed: Effect.Effect<ReadonlyArray<Event.Envelope>>;
+}> = Effect.gen(function* () {
+  const enqueued = yield* Ref.make<ReadonlyArray<Event.Envelope>>([]);
+  const flushed = yield* Ref.make<ReadonlyArray<Event.Envelope>>([]);
+  const transport = AfterCommitTransport.of({
+    enqueue: (envelopes) => Ref.update(enqueued, (prev) => [...prev, ...envelopes]),
+    flush: (envelopes) => Ref.update(flushed, (prev) => [...prev, ...envelopes]),
+  });
+  return {
+    transport,
+    layer: Layer.succeed(AfterCommitTransport, transport),
+    enqueued: Ref.get(enqueued),
+    flushed: Ref.get(flushed),
+  };
+});
+
+/**
+ * A ledger held in memory. Its claims survive a rolled-back unit of work, which
+ * a real one's must not — so it proves a redelivery is skipped, and nothing
+ * about a retry after a failure.
+ */
+export const InMemoryDeliveryLedger: Layer.Layer<DeliveryLedger> = Layer.effect(
+  DeliveryLedger,
+  Effect.map(Ref.make<ReadonlySet<string>>(new Set()), (claimed) =>
+    DeliveryLedger.of({
+      claim: (eventId, handler) =>
+        Ref.modify(claimed, (prev) => {
+          const key = `${eventId}\u0000${handler}`;
+          return prev.has(key) ? [false, prev] : [true, new Set([...prev, key])];
+        }),
+    }),
+  ),
 );
