@@ -45,7 +45,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { Command, CommandBus } from "@effect-server-utils/cqrs";
 
-class OrderNotFound extends Schema.TaggedErrorClass<OrderNotFound>()("OrderNotFound", {
+class OrderNotFound extends Schema.TaggedError<OrderNotFound>()("OrderNotFound", {
   orderId: Schema.String,
 }) {}
 

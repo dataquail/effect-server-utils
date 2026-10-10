@@ -11,7 +11,7 @@ import { checkEventsSerializable, checkSerializable } from "./testing.js";
 
 const UserId = Schema.String.pipe(Schema.brand("UserId"));
 
-class UserAlreadyExists extends Schema.TaggedErrorClass<UserAlreadyExists>()("UserAlreadyExists", {
+class UserAlreadyExists extends Schema.TaggedError<UserAlreadyExists>()("UserAlreadyExists", {
   email: Schema.String,
 }) {}
 
@@ -85,6 +85,22 @@ describe("checkSerializable", () => {
       deepStrictEqual(
         found.map(({ channel, tag }) => ({ channel, tag })),
         [{ channel: "success", tag: "FindAnythingQuery" }],
+      );
+    }),
+  );
+
+  it.effect("catches Unknown nested inside a described structure", () =>
+    Effect.gen(function* () {
+      const nested = Query.make("FindNestedAnythingQuery", {
+        payload: { id: Schema.String },
+        success: Schema.Struct({ items: Schema.Array(Schema.Struct({ extra: Schema.Unknown })) }),
+      });
+
+      const found = yield* checkSerializable(Query.group(nested));
+
+      deepStrictEqual(
+        found.map(({ channel, tag }) => ({ channel, tag })),
+        [{ channel: "success", tag: "FindNestedAnythingQuery" }],
       );
     }),
   );

@@ -89,14 +89,11 @@ export const span = (options: {
  * of how the *host* chose to dispatch — no definition declares it, so no call site
  * can be expected to handle it.
  */
-export class DeadlineExceeded extends Schema.TaggedErrorClass<DeadlineExceeded>()(
-  "DeadlineExceeded",
-  {
-    tag: Schema.String,
-    side: Schema.String,
-    after: Schema.String,
-  },
-) {
+export class DeadlineExceeded extends Schema.TaggedError<DeadlineExceeded>()("DeadlineExceeded", {
+  tag: Schema.String,
+  side: Schema.String,
+  after: Schema.String,
+}) {
   override get message(): string {
     return `${this.side} '${this.tag}' outlived its ${this.after} deadline`;
   }

@@ -8,7 +8,7 @@ import * as Schema from "effect/Schema";
  * a host's boot check, or a test, wants to match on rather than parse out of a
  * message string.
  */
-export class DuplicateDispatchTag extends Schema.TaggedErrorClass<DuplicateDispatchTag>()(
+export class DuplicateDispatchTag extends Schema.TaggedError<DuplicateDispatchTag>()(
   "DuplicateDispatchTag",
   { tag: Schema.String },
 ) {
@@ -18,7 +18,7 @@ export class DuplicateDispatchTag extends Schema.TaggedErrorClass<DuplicateDispa
 }
 
 /** A tag a group declared that no module's dispatch surface answers. */
-export class UnroutableTags extends Schema.TaggedErrorClass<UnroutableTags>()("UnroutableTags", {
+export class UnroutableTags extends Schema.TaggedError<UnroutableTags>()("UnroutableTags", {
   bus: Schema.String,
   tags: Schema.Array(Schema.String),
 }) {
@@ -30,7 +30,7 @@ export class UnroutableTags extends Schema.TaggedErrorClass<UnroutableTags>()("U
 }
 
 /** A dispatch reached a bus for a tag its table has no entry for. */
-export class MissingHandler extends Schema.TaggedErrorClass<MissingHandler>()("MissingHandler", {
+export class MissingHandler extends Schema.TaggedError<MissingHandler>()("MissingHandler", {
   bus: Schema.String,
   tag: Schema.String,
 }) {

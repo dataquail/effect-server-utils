@@ -1,7 +1,8 @@
+import * as Arbitrary from "effect/Arbitrary";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import * as FastCheck from "effect/testing/FastCheck";
+import type * as SchemaAST from "effect/SchemaAST";
 
 import type * as Message from "./message.js";
 
@@ -24,6 +25,39 @@ const carriesNothing = (schema: Schema.Top): boolean => {
 };
 
 const SAMPLES = 20;
+
+/**
+ * Whether any part of the schema is `Unknown` or `Any`. Effect's generator fills
+ * those with JSON, so sampling alone would pass a value nobody described.
+ */
+const declaresUndescribedValue = (root: SchemaAST.AST): boolean => {
+  const visited = new Set<SchemaAST.AST>();
+  const visit = (ast: SchemaAST.AST): boolean => {
+    if (visited.has(ast)) return false;
+    visited.add(ast);
+    switch (ast._tag) {
+      case "Unknown":
+      case "Any":
+        return true;
+      case "Declaration":
+        return ast.typeParameters.some(visit);
+      case "Arrays":
+        return ast.elements.some(visit) || ast.rest.some(visit);
+      case "Objects":
+        return (
+          ast.propertySignatures.some((property) => visit(property.type)) ||
+          ast.indexSignatures.some((index) => visit(index.type))
+        );
+      case "Union":
+        return ast.types.some(visit);
+      case "Suspend":
+        return visit(ast.thunk());
+      default:
+        return false;
+    }
+  };
+  return visit(root);
+};
 
 /**
  * Checks that a message's declared channels can be represented as JSON and read
@@ -69,11 +103,23 @@ const checkChannel = Effect.fnUntraced(function* (
   // throws here, and that is exactly the shape that cannot be serialized either.
   // Kept out of the checker's own error channel: an unusable schema is a finding
   // to report, not a failure of the checker.
+  if (declaresUndescribedValue(schema.ast)) {
+    return "declares a value as Unknown or Any, which has no JSON encoding to check";
+  }
+
   const generated = yield* Effect.result(
     Effect.try({
-      try: () => FastCheck.sample(Schema.toArbitrary(schema), SAMPLES),
+      try: () => Arbitrary.schema(schema),
       catch: (cause) => `no generator could be derived: ${String(cause)}`,
-    }),
+    }).pipe(
+      Effect.flatMap((arbitrary) =>
+        Arbitrary.sampleEffect(arbitrary, { count: SAMPLES }).pipe(
+          Effect.mapError(
+            (error) => `no values could be generated: exhausted after ${error.generated}`,
+          ),
+        ),
+      ),
+    ),
   );
 
   if (Result.isFailure(generated)) return generated.failure;

@@ -20,7 +20,7 @@ import { mergeDispatchTables, MissingHandler } from "./dispatch-table.js";
 // explicitly unstable module pinned to an exact beta. These tests exist so a bump
 // that changes any of it fails here rather than in someone's production.
 
-class Rejected extends Schema.TaggedErrorClass<Rejected>()("Rejected", {
+class Rejected extends Schema.TaggedError<Rejected>()("Rejected", {
   subject: Schema.String,
 }) {}
 

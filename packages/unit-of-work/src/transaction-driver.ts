@@ -12,7 +12,7 @@ import type { PersistenceUnavailable } from "./persistence-unavailable.js";
  * domain errors. What is left is the boundary itself failing, which no use case
  * can act on, so `withUnitOfWork` demotes it to a defect.
  */
-export class TransactionFailed extends Schema.TaggedErrorClass<TransactionFailed>()(
+export class TransactionFailed extends Schema.TaggedError<TransactionFailed>()(
   "TransactionFailed",
   { message: Schema.String },
 ) {}
