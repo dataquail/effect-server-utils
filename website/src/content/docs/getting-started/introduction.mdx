@@ -54,7 +54,7 @@ Whether your model is CRUD or a set of domain verbs stays your decision.
 
 ## What they assume
 
-- **Effect 4** (currently `4.0.2`, declared as an exact peer dependency).
+- **Effect 4** (`^4.0.2`, declared as a peer dependency; tested against `4.0.5`).
 - **ESM or CJS** — both are published, with type declarations for each.
 - **Nothing about your datastore.** The CQRS package does not know what a transaction is at all. The
   unit of work is a separate package, written against a `TransactionDriver` interface with three

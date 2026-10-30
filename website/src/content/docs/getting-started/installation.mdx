@@ -50,20 +50,22 @@ yarn add @effect-server-utils/unit-of-work @effect-server-utils/cqrs effect
 
 ## The Effect peer dependency
 
-`effect` is declared as an **exact** peer dependency on the beta these packages are built against:
+`effect` is declared as a caret peer dependency on the first Effect 4 release these packages support:
 
 ```json
 "peerDependencies": {
-  "effect": "4.0.2"
+  "effect": "^4.0.2"
 }
 ```
 
-Effect 4 is still in beta and its pre-release versions are not compatible with one another. Pinning
-exactly is what keeps a mismatched `effect` in your lockfile from surfacing as a type error deep
-inside a schema signature. When you move to a newer beta, expect to move every package with it.
+Any later 4.x satisfies it, so the packages use the one copy of `effect` your app already installs. Two
+copies are what to avoid: a schema or service tag from one does not match the other, and the mismatch
+surfaces as a type error deep inside a signature or a missing service at runtime. The test suite runs
+against `effect` 4.0.5.
 
-`@effect-server-utils/unit-of-work` pins `@effect-server-utils/cqrs` the same way, and for the same
-reason: the two are coupled through the `DeferralSink` contract, so they are released together.
+`@effect-server-utils/unit-of-work` declares `@effect-server-utils/cqrs` as a caret peer on the version
+it was released with. The two are coupled through the `DeferralSink` contract, and while they are
+pre-1.0 betas a caret only admits later betas of the same line, so they still move together.
 
 ## TypeScript
 

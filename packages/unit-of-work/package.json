@@ -35,12 +35,12 @@
     "build-prune": "node ../../scripts/prune-dist.mjs"
   },
   "peerDependencies": {
-    "@effect-server-utils/cqrs": "workspace:*",
-    "effect": "4.0.2"
+    "@effect-server-utils/cqrs": "workspace:^",
+    "effect": "^4.0.2"
   },
   "devDependencies": {
     "@effect-server-utils/cqrs": "workspace:*",
-    "effect": "4.0.2"
+    "effect": "4.0.5"
   },
   "effect": {
     "generateExports": {

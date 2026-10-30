@@ -1,6 +1,7 @@
 #!/bin/bash
 
-# Script to replace workspace:* dependencies with actual version numbers
+# Script to replace workspace:* / workspace:^ / workspace:~ dependencies with
+# actual version ranges
 # in all package.json files under packages/*/dist/
 
 set -e
@@ -62,7 +63,7 @@ for dist_pkg_json in "$PACKAGES_DIR"/*/dist/package.json; do
         temp_file=$(mktemp)
         cp "$dist_pkg_json" "$temp_file"
         
-        # Replace workspace:* dependencies with actual versions
+        # Replace workspace: dependencies with actual versions
         while IFS='=' read -r pkg_name pkg_version; do
             # Skip empty lines
             [ -z "$pkg_name" ] && continue
@@ -74,35 +75,26 @@ for dist_pkg_json in "$PACKAGES_DIR"/*/dist/package.json; do
                 try {
                     const pkg = JSON.parse(fs.readFileSync(path, 'utf8'));
                     let modified = false;
-                    
-                    // Update dependencies
-                    if (pkg.dependencies && pkg.dependencies['$pkg_name'] === 'workspace:*') {
-                        pkg.dependencies['$pkg_name'] = '$pkg_version';
-                        modified = true;
-                        console.log('  ✓ Updated dependencies[\"$pkg_name\"] to $pkg_version');
+
+                    // workspace:* pins the exact version; workspace:^ and
+                    // workspace:~ keep their operator, the way pnpm publish
+                    // resolves them.
+                    const resolve = (spec) =>
+                        spec === 'workspace:*' ? '$pkg_version'
+                        : spec === 'workspace:^' ? '^$pkg_version'
+                        : spec === 'workspace:~' ? '~$pkg_version'
+                        : undefined;
+
+                    for (const field of ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']) {
+                        const spec = pkg[field] && pkg[field]['$pkg_name'];
+                        const resolved = spec === undefined ? undefined : resolve(spec);
+                        if (resolved !== undefined) {
+                            pkg[field]['$pkg_name'] = resolved;
+                            modified = true;
+                            console.log('  ✓ Updated ' + field + '[\"$pkg_name\"] to ' + resolved);
+                        }
                     }
-                    
-                    // Update devDependencies
-                    if (pkg.devDependencies && pkg.devDependencies['$pkg_name'] === 'workspace:*') {
-                        pkg.devDependencies['$pkg_name'] = '$pkg_version';
-                        modified = true;
-                        console.log('  ✓ Updated devDependencies[\"$pkg_name\"] to $pkg_version');
-                    }
-                    
-                    // Update peerDependencies
-                    if (pkg.peerDependencies && pkg.peerDependencies['$pkg_name'] === 'workspace:*') {
-                        pkg.peerDependencies['$pkg_name'] = '$pkg_version';
-                        modified = true;
-                        console.log('  ✓ Updated peerDependencies[\"$pkg_name\"] to $pkg_version');
-                    }
-                    
-                    // Update optionalDependencies
-                    if (pkg.optionalDependencies && pkg.optionalDependencies['$pkg_name'] === 'workspace:*') {
-                        pkg.optionalDependencies['$pkg_name'] = '$pkg_version';
-                        modified = true;
-                        console.log('  ✓ Updated optionalDependencies[\"$pkg_name\"] to $pkg_version');
-                    }
-                    
+
                     if (modified) {
                         fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + '\n');
                     }
