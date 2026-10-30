@@ -63,12 +63,15 @@ the one-`package.json` subpath proxy directory `pack-v2` writes per entrypoint �
 `exports` is authoritative for every resolver a consumer of an exports-only `effect@4` can be on. `typesVersions` deliberately stays; the script's header comment
 has the full reasoning. `pack-v2` has no flag for either, hence the post-pass rather than a pnpm patch.
 
-**`effect` is an exact peer dependency** (`4.0.2`) in every package, pinned again in the root
-`pnpm.overrides`. Bumping it is a coordinated change to all three.
+**`effect` is a caret peer dependency** (`^4.0.2`) in every package, so a host on any later 4.x shares
+its single copy of `effect`. The dev dependency — what the tests actually run on — is pinned exactly
+(`4.0.5`) and pinned again in the root `pnpm.overrides`. Raising the peer floor is a coordinated change
+to all three.
 
-**`unit-of-work` peer-depends on `cqrs` as `workspace:*`.** `scripts/fix-workspace-deps.sh` rewrites
-that to the real version in `dist/package.json` at publish time, so the published range is an exact
-pin — which is what the `DeferralSink` coupling warrants while both are pre-1.0.
+**`unit-of-work` peer-depends on `cqrs` as `workspace:^`.** `scripts/fix-workspace-deps.sh` rewrites
+that to `^<version>` in `dist/package.json` at publish time. On a prerelease such as `0.1.0-beta.10` a
+caret only admits later betas of the same `0.1.0`, which keeps the `DeferralSink` coupling to a
+compatible line while still letting a host's single `cqrs` satisfy the peer.
 
 **`tsconfig.base.json` `paths` target `.ts`, not `.js`.** A `.js` target only resolves when the file is
 already in the compiling program — true within a package, false across one. Before this the

@@ -14,8 +14,8 @@ pnpm add @effect-server-utils/cqrs effect
 pnpm add @effect-server-utils/authz effect
 ```
 
-`effect` is an exact peer dependency (`4.0.2`) — every package pins the Effect release it was
-built and tested against, and the packages are bumped together.
+`effect` is a peer dependency on `^4.0.2`, so the packages share whatever Effect 4 your app installs.
+The test suite runs against `effect` 4.0.5.
 
 ## Repository layout
 

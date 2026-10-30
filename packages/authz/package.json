@@ -34,10 +34,10 @@
     "build-prune": "node ../../scripts/prune-dist.mjs"
   },
   "peerDependencies": {
-    "effect": "4.0.2"
+    "effect": "^4.0.2"
   },
   "devDependencies": {
-    "effect": "4.0.2"
+    "effect": "4.0.5"
   },
   "effect": {
     "generateExports": {

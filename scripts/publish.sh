@@ -3,7 +3,7 @@
 # Script to handle the complete publishing process
 # 1. Configures git for GitHub Actions
 # 2. Builds packages
-# 3. Resolves workspace:* dependencies to real versions
+# 3. Resolves workspace: dependencies to real versions
 # 4. Works out which packages still need publishing, publishes those, and
 #    verifies them against the registry
 
